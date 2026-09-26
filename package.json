@@ -10,7 +10,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "dashboard": "tsx src/dashboard/server.ts --port 3000",
+    "dashboard:optuna": "python-backtester/.venv/Scripts/optuna-dashboard.exe sqlite:///python-backtester/optimization_study_optuna.db --port 8080"
   },
   "keywords": [
     "binance",

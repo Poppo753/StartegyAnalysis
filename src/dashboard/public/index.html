@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backtest dashboard (F8)</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:1100px;margin:1rem auto;padding:0 1rem}
+table{border-collapse:collapse;font-size:13px}th,td{border:1px solid #ccc;padding:3px 8px;text-align:right}
+th{background:#f0f0f0;cursor:pointer}td:first-child,th:first-child{text-align:left}
+section{margin:2rem 0}label{margin-right:.6rem;font-size:13px}input,select{margin-right:.4rem}
+canvas{border:1px solid #ccc;max-width:100%}.hm-hot{background:#ffd166}.note{color:#555;font-size:13px}
+</style>
+</head>
+<body>
+<h1>Backtest dashboard <span class="note">(F8-U02/U03/U04 · vanilla JS, no deps)</span></h1>
+<p class="note">Conventions: signal-only mode draws equity on <code>pnl_percent</code>, otherwise on
+<code>pnl</code> (metrics.py). Filters on unavailable columns (e.g. Sharpe on fast CSVs) do not
+exclude rows. <a id="reportLink" href="#">Full HTML report</a></p>
+
+<section>
+<h2>1 · Strategies (heatmap params + filters + CSV export)</h2>
+<div>
+<label>Symbol <input id="symbol" value="DCRUSDT" size="10"></label>
+<label>X param <select id="hx"><option>x_percent</option><option>y_seconds</option><option>z_percent</option><option>ma_period</option><option>z_threshold</option></select></label>
+<label>Y param <select id="hy"><option>z_percent</option><option>x_percent</option><option>y_seconds</option><option>ma_period</option><option>z_threshold</option></select></label>
+<label>Metric <select id="hm"><option>total_pnl</option><option>sharpe_ratio</option><option>sortino_ratio</option><option>total_pnl_percent</option></select></label>
+</div>
+<div style="margin-top:.5rem">
+<label>strategy <input id="fStrategy" size="14" placeholder="any"></label>
+<label>regime <input id="fRegime" size="10" placeholder="any"></label>
+<label>min trades <input id="fMinTrades" size="5" placeholder="0"></label>
+<label>min Sharpe <input id="fMinSharpe" size="5" placeholder="-inf"></label>
+<label>max DD <input id="fMaxDd" size="5" placeholder="+inf"></label>
+<button id="reload">Reload</button>
+<button id="exportCsv">Export CSV</button>
+<span id="count" class="note"></span>
+</div>
+<div id="heatmap" style="margin-top:1rem"></div>
+<div style="margin-top:1rem;overflow:auto"><table id="grid"><thead></thead><tbody></tbody></table></div>
+</section>
+
+<section>
+<h2>2 · Equity + drawdown per strategy</h2>
+<div>
+<label>trades file <select id="tradesFile"></select></label>
+<label>mode <select id="mode"><option value="signal-only">signal-only (pnl_percent)</option><option value="pnl">pnl (USDT)</option></select></label>
+<button id="loadEquity">Load</button>
+<span id="equityInfo" class="note"></span>
+</div>
+<canvas id="equityCanvas" width="900" height="220"></canvas>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>

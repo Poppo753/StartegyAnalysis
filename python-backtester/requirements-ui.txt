@@ -1,0 +1,4 @@
+# requirements-ui.txt — UI-ONLY dependencies (F8-U01).
+# ISOLATED: never merge into requirements.txt (core backtester deps).
+# Install with: python-backtester/.venv/Scripts/pip.exe install -r python-backtester/requirements-ui.txt
+optuna-dashboard==0.21.0

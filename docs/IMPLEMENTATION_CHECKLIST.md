@@ -413,22 +413,22 @@ Lane D (UI, Fase 8): scheletro avviabile dopo F1+F2 (formati risultati + study O
 
 **Obiettivo**: visualizzazione interattiva di tutto. Prerequisiti: F1+F2 (formati risultati + study); wiring completo dopo F3/F7. Sviluppo con mock fino ad allora (Lane D).
 
-- [ ] **F8-U01 · Optuna Dashboard sullo study RDB**
+- [x] **F8-U01 · Optuna Dashboard sullo study RDB**
   Operazione: `pip install optuna-dashboard` (dipendenza solo-UI, isolata: non entra in `requirements.txt` core — file separato `requirements-ui.txt` o nota nel report); `optuna-dashboard` su `optimization_study_optuna.db` (stesso file di F2-B03); script `npm run dashboard:optuna` (o `optuna-dashboard sqlite:///...`); documentare porta e accesso.
   DoD: dashboard raggiungibile con history/param-importance dello study reale F2.
   Dipendenze: F2. Stima: 0.5 sett. Lane: D.
 
-- [ ] **F8-U02 · Equity curve + drawdown per strategia**
+- [x] **F8-U02 · Equity curve + drawdown per strategia**
   Operazione: endpoint/pagina che legge i CSV risultati (`backtest-results/{SYMBOL}/`) e disegna equity cumulata e underwater; convenzione `metrics.py` rispettata (modalità signal-only → equity su `pnl_percent`, altrimenti su `pnl` — in signal-only l'equity USDT è piatta per costruzione, mostrarla sarebbe fuorviante); mock JSON fino al wiring.
   DoD: su golden dataset, equity finale ≡ `total_pnl` (o `total_pnl_percent` in signal-only) del CSV (assert numerico, non visivo).
   Dipendenze: F1 (formato risultati). Stima: 0.75 sett. Lane: D.
 
-- [ ] **F8-U03 · Parameter heatmap + tabella confronto strategie con filtri**
+- [x] **F8-U03 · Parameter heatmap + tabella confronto strategie con filtri**
   Operazione: heatmap su 2 parametri a scelta (default X×Z per momentum, NON hardcoded: la strategia ha N parametri generici) con metrica a scelta (PnL/Sharpe/Sortino); tabella filtrabile (strategia, regime, min trades, min Sharpe, max DD) con ordinamento; esportazione CSV della vista.
   DoD: filtri su golden dataset restituiscono le righe attese (test su logica di filtro, non su pixel); heatmap verificata anche su mean-reversion (assi = suoi parametri, non X/Y/Z).
   Dipendenze: F8-U02. Stima: 1 sett. Lane: D.
 
-- [ ] **F8-U04 · Report PDF/HTML completo**
+- [x] **F8-U04 · Report PDF/HTML completo**
   Operazione: template che assembla config, top-N, equity/drawdown, heatmap, PBO/DSR (se F3 attiva), regime corrente (se F5 attiva); sezioni assenti se la fase non è attiva (degradazione elegante, mai crash).
   DoD: report generato su golden dataset con tutte le sezioni disponibili; con sole F1+F2 attive, le sezioni F3/F5 risultano "non disponibile" senza errori.
   Dipendenze: F8-U03 (+F3/F7 per wiring completo). Stima: 0.75 sett. Lane: D.
