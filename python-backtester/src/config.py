@@ -50,6 +50,10 @@ class Config:
     backtest_engine: str = "standard"  # "standard", "fast", o "gpu"
     fast_top_n: int = 20
 
+    # Strategie da eseguire (Fase 1, F1-S04): nomi del registry
+    # src/strategies (es. "momentum_drop", "mean_reversion").
+    strategies: List[str] = field(default_factory=lambda: ["momentum_drop"])
+
     # GPU/Screening (Fase 3)
     gpu_batch_size: int = 2048
     train_ratio: float = 0.7
@@ -264,6 +268,11 @@ def load_config() -> Config:
         raise ConfigError("Parametri filtri devono essere numerici") from e
 
     config.skip_filters = os.getenv("SKIP_FILTERS", "false").strip().lower() in ("true", "1", "yes")
+
+    # --- Strategie (F1-S04) ---
+    strategies_str = os.getenv("STRATEGIES", "momentum_drop")
+    strategies = [s.strip().lower() for s in strategies_str.split(",") if s.strip()]
+    config.strategies = strategies if strategies else ["momentum_drop"]
 
     # --- Y Dinamico ---
     config.y_dynamic = os.getenv("Y_DYNAMIC", "false").strip().lower() in ("true", "1", "yes")

@@ -68,4 +68,7 @@ class BacktestResult:
     profit_factor: float = 0.0
     avg_mae: float = 0.0
     avg_mfe: float = 0.0
+    sortino_ratio: float = 0.0
+    calmar_ratio: float = 0.0
+    expectancy: float = 0.0
     trades: List[Trade] = field(default_factory=list)

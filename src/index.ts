@@ -1,5 +1,5 @@
 import { loadConfig } from './config/config';
-import { runPipeline } from './pipeline/runPipeline';
+import { parseTimeframesArgv, runPipeline } from './pipeline/runPipeline';
 import { logger } from './utils/logger';
 
 async function main(): Promise<void> {
@@ -7,7 +7,8 @@ async function main(): Promise<void> {
     logger.info('Binance OHLC Pipeline - Starting...');
 
     const config = loadConfig();
-    await runPipeline(config);
+    const timeframes = parseTimeframesArgv();
+    await runPipeline(config, { timeframes });
 
     logger.info('Pipeline completed successfully.');
     process.exit(0);

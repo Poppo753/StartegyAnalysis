@@ -7,8 +7,64 @@ import { pipeline } from 'stream/promises';
 import { BinanceAggTrade, OhlcCandle } from '../binance/types';
 import { floorToSecond, timestampMsToIso } from '../utils/dateUtils';
 
+/**
+ * Intervals supported by the aggregator (F7-T01), in seconds.
+ * Buckets are UTC epoch-anchored: 1m aligns to minute boundaries,
+ * 1h to hour boundaries, 1d to UTC midnight.
+ */
+export const SUPPORTED_INTERVAL_SECONDS = [1, 60, 300, 3600, 86400] as const;
+export type SupportedIntervalSeconds = (typeof SUPPORTED_INTERVAL_SECONDS)[number];
+
+const TIMEFRAME_LABELS: Record<number, string> = {
+  1: '1s',
+  60: '1m',
+  300: '5m',
+  3600: '1h',
+  86400: '1d',
+};
+
+const LABEL_TO_INTERVAL: Record<string, number> = {
+  '1s': 1,
+  '1m': 60,
+  '5m': 300,
+  '1h': 3600,
+  '1d': 86400,
+};
+
+export function assertSupportedInterval(intervalSeconds: number): void {
+  if (!(SUPPORTED_INTERVAL_SECONDS as readonly number[]).includes(intervalSeconds)) {
+    throw new Error(
+      `Unsupported OHLC interval: ${intervalSeconds}s (supported: ${SUPPORTED_INTERVAL_SECONDS.join(', ')})`
+    );
+  }
+}
+
+export function intervalToTimeframeLabel(intervalSeconds: number): string {
+  assertSupportedInterval(intervalSeconds);
+  return TIMEFRAME_LABELS[intervalSeconds];
+}
+
+export function timeframeLabelToInterval(label: string): number {
+  const interval = LABEL_TO_INTERVAL[label];
+  if (interval === undefined) {
+    throw new Error(`Unsupported timeframe label: ${label} (supported: 1s, 1m, 5m, 1h, 1d)`);
+  }
+  return interval;
+}
+
+/**
+ * Floor a ms timestamp to the start of its interval bucket (UTC, epoch-anchored).
+ * For intervalSeconds === 1 this is exactly floorToSecond.
+ */
+export function floorToInterval(timestampMs: number, intervalSeconds: number): number {
+  assertSupportedInterval(intervalSeconds);
+  const bucketMs = intervalSeconds * 1000;
+  return Math.floor(timestampMs / bucketMs) * bucketMs;
+}
+
 export class OHLCAggregator {
-  private currentSecond: number | null = null;
+  private readonly intervalSeconds: number;
+  private currentBucket: number | null = null;
   private bucketOpen = 0;
   private bucketHigh = -Infinity;
   private bucketLow = Infinity;
@@ -20,7 +76,9 @@ export class OHLCAggregator {
   private lastLogAt = Date.now();
   private readonly logIntervalMs: number;
 
-  constructor(logIntervalMs: number = 30_000) {
+  constructor(intervalSeconds: number = 1, logIntervalMs: number = 30_000) {
+    assertSupportedInterval(intervalSeconds);
+    this.intervalSeconds = intervalSeconds;
     this.logIntervalMs = logIntervalMs;
   }
 
@@ -44,7 +102,9 @@ export class OHLCAggregator {
   }
 
   /**
-   * Aggregate trades from a JSONL file into 1-second OHLCV candles using streaming.
+   * Aggregate trades from a JSONL file into OHLCV candles at the configured
+   * interval, using streaming (O(1) memory: one open bucket at a time).
+   * Assumes trades are time-ordered (as written by the downloader).
    */
   async fromStream(inputPath: string, outputPath: string): Promise<number> {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -83,19 +143,23 @@ export class OHLCAggregator {
   }
 
   /**
-   * Aggregate trades from an array into OHLCV candles.
+   * Aggregate trades from an array into OHLCV candles at the given interval.
+   * Defaults to 1 second (backward-compatible with the pre-F7 behavior).
    */
-  static fromArray(trades: BinanceAggTrade[]): OhlcCandle[] {
+  static fromArray(trades: BinanceAggTrade[], intervalSeconds: number = 1): OhlcCandle[] {
+    assertSupportedInterval(intervalSeconds);
     const sorted = [...trades].sort((a, b) => a.T - b.T || a.a - b.a);
     const buckets = new Map<number, BinanceAggTrade[]>();
 
     for (const trade of sorted) {
-      const secondKey = floorToSecond(OHLCAggregator.normalizeTimestamp(trade.T));
-      const bucket = buckets.get(secondKey);
+      const timestampMs = OHLCAggregator.normalizeTimestamp(trade.T);
+      const bucketKey =
+        intervalSeconds === 1 ? floorToSecond(timestampMs) : floorToInterval(timestampMs, intervalSeconds);
+      const bucket = buckets.get(bucketKey);
       if (bucket) {
         bucket.push(trade);
       } else {
-        buckets.set(secondKey, [trade]);
+        buckets.set(bucketKey, [trade]);
       }
     }
 
@@ -128,27 +192,28 @@ export class OHLCAggregator {
     const price = OHLCAggregator.priceToNumber(trade.p);
     const quantity = OHLCAggregator.quantityToNumber(trade.q);
     const timestampMs = OHLCAggregator.normalizeTimestamp(trade.T);
-    const secondKey = floorToSecond(timestampMs);
+    const bucketKey =
+      this.intervalSeconds === 1 ? floorToSecond(timestampMs) : floorToInterval(timestampMs, this.intervalSeconds);
 
     this.lineCount++;
 
-    if (this.currentSecond === null) {
-      this.currentSecond = secondKey;
+    if (this.currentBucket === null) {
+      this.currentBucket = bucketKey;
       this.bucketOpen = price;
       this.bucketHigh = price;
       this.bucketLow = price;
       this.bucketClose = price;
       this.bucketVolume = quantity;
       this.bucketTradeCount = 1;
-    } else if (secondKey === this.currentSecond) {
+    } else if (bucketKey === this.currentBucket) {
       if (price > this.bucketHigh) this.bucketHigh = price;
       if (price < this.bucketLow) this.bucketLow = price;
       this.bucketClose = price;
       this.bucketVolume += quantity;
       this.bucketTradeCount++;
     } else {
-      this.writeCandle(writeStream, this.currentSecond);
-      this.currentSecond = secondKey;
+      this.writeCandle(writeStream, this.currentBucket);
+      this.currentBucket = bucketKey;
       this.bucketOpen = price;
       this.bucketHigh = price;
       this.bucketLow = price;
@@ -163,17 +228,32 @@ export class OHLCAggregator {
     }
   }
 
-  private writeCandle(writeStream: fs.WriteStream, secondMs: number): void {
-    const line = `${timestampMsToIso(secondMs)},${OHLCAggregator.fmt(this.bucketOpen)},${OHLCAggregator.fmt(this.bucketHigh)},${OHLCAggregator.fmt(this.bucketLow)},${OHLCAggregator.fmt(this.bucketClose)},${OHLCAggregator.fmt(this.bucketVolume)},${this.bucketTradeCount}\n`;
+  private writeCandle(writeStream: fs.WriteStream, bucketMs: number): void {
+    const line = `${timestampMsToIso(bucketMs)},${OHLCAggregator.fmt(this.bucketOpen)},${OHLCAggregator.fmt(this.bucketHigh)},${OHLCAggregator.fmt(this.bucketLow)},${OHLCAggregator.fmt(this.bucketClose)},${OHLCAggregator.fmt(this.bucketVolume)},${this.bucketTradeCount}\n`;
     writeStream.write(line);
     this.candleCount++;
   }
 
   private flush(writeStream: fs.WriteStream): void {
-    if (this.currentSecond !== null) {
-      this.writeCandle(writeStream, this.currentSecond);
+    if (this.currentBucket !== null) {
+      this.writeCandle(writeStream, this.currentBucket);
       this.candleCount++;
     }
     writeStream.end();
   }
+}
+
+/**
+ * Aggregate trades into OHLCV candles at an arbitrary supported interval
+ * (1/60/300/3600/86400 seconds). Array-based (in-memory) variant.
+ */
+export function aggregateToOhlc(trades: BinanceAggTrade[], intervalSeconds: number): OhlcCandle[] {
+  return OHLCAggregator.fromArray(trades, intervalSeconds);
+}
+
+/**
+ * Backward-compatible 1-second wrapper (pre-F7 behavior).
+ */
+export function aggregateToOhlc1s(trades: BinanceAggTrade[]): OhlcCandle[] {
+  return OHLCAggregator.fromArray(trades, 1);
 }

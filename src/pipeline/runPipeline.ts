@@ -1,14 +1,60 @@
+import fs from 'fs';
 import path from 'path';
 import { AppConfig } from '../config/config';
 import { BinanceClient } from '../binance/binanceClient';
 import { downloadAggTrades } from './downloadAggTrades';
-import { aggregateFileToOhlc1s } from './aggregateStreaming';
+import { aggregateFileToOhlc } from './aggregateStreaming';
+import { timeframeLabelToInterval } from './ohlcAggregator';
 import { GlobalRateLimiter } from '../utils/rateLimiter';
 import { logger } from '../utils/logger';
 
+export const SUPPORTED_TIMEFRAMES = ['1s', '1m', '5m', '1h', '1d'] as const;
+export type SupportedTimeframe = (typeof SUPPORTED_TIMEFRAMES)[number];
+
+export interface RunPipelineOptions {
+  timeframes?: string[];
+}
+
+/**
+ * Minimal argv parsing for `--timeframes 1s,1m,5m,1h,1d`
+ * (also accepts `--timeframes=...`). Unknown labels throw.
+ * Defaults to ['1s'] (pre-F7 behavior) when the flag is absent.
+ */
+export function parseTimeframesArgv(argv: string[] = process.argv.slice(2)): string[] {
+  let raw: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--timeframes' && argv[i + 1] !== undefined) {
+      raw = argv[i + 1];
+      i++;
+    } else if (argv[i].startsWith('--timeframes=')) {
+      raw = argv[i].slice('--timeframes='.length);
+    }
+  }
+  if (raw === undefined || raw.trim() === '') return ['1s'];
+
+  const seen = new Set<string>();
+  const timeframes: string[] = [];
+  for (const part of raw.split(',')) {
+    const tf = part.trim();
+    if (tf === '') continue;
+    timeframeLabelToInterval(tf); // throws on unsupported label
+    if (!seen.has(tf)) {
+      seen.add(tf);
+      timeframes.push(tf);
+    }
+  }
+  if (timeframes.length === 0) return ['1s'];
+  return timeframes;
+}
+
+export function ohlcFilename(timeframe: string, startDate: string, endDate: string): string {
+  return `ohlc_${timeframe}_${startDate}_${endDate}.csv`;
+}
+
 const log = (config: AppConfig) => config.jsonLogging ? logger.json : logger;
 
-export async function runPipeline(config: AppConfig): Promise<void> {
+export async function runPipeline(config: AppConfig, options: RunPipelineOptions = {}): Promise<void> {
+  const timeframes = options.timeframes ?? parseTimeframesArgv();
   const rateLimiter = new GlobalRateLimiter(config.maxRequestsPerMinute);
   const client = new BinanceClient(config.binanceBaseUrl, config.requestDelayMs, rateLimiter);
 
@@ -16,12 +62,13 @@ export async function runPipeline(config: AppConfig): Promise<void> {
 
   _log.info(`Pipeline starting for ${config.symbols.length} symbol(s): ${config.symbols.join(', ')}`);
   _log.info(`Date range: ${config.startDate} to ${config.endDate}`);
+  _log.info(`Timeframes: ${timeframes.join(', ')}`);
   _log.info(`Output directory: ${config.outputDir}`);
   _log.info(`Concurrency: ${config.concurrentDays} days/symbol | Rate limit: ${config.maxRequestsPerMinute} req/min`);
   _log.info(`Gzip compression: ${config.useGzip ? 'enabled' : 'disabled'}`);
 
   const symbolPromises = config.symbols.map((symbol) =>
-    processSymbol(client, symbol, config)
+    processSymbol(client, symbol, config, timeframes)
   );
 
   const results = await Promise.allSettled(symbolPromises);
@@ -44,7 +91,8 @@ export async function runPipeline(config: AppConfig): Promise<void> {
 async function processSymbol(
   client: BinanceClient,
   symbol: string,
-  config: AppConfig
+  config: AppConfig,
+  timeframes: string[]
 ): Promise<void> {
   const _log = log(config);
 
@@ -68,12 +116,26 @@ async function processSymbol(
   }
 
   const ohlcDir = path.join(config.outputDir, symbol, 'ohlc');
-  const ohlcFilePath = path.join(
-    ohlcDir,
-    `ohlc_1s_${config.startDate}_${config.endDate}.csv`
-  );
 
-  const candleCount = await aggregateFileToOhlc1s(rawFilePath, ohlcFilePath);
+  for (const timeframe of timeframes) {
+    const ohlcFilePath = path.join(
+      ohlcDir,
+      ohlcFilename(timeframe, config.startDate, config.endDate)
+    );
 
-  _log.info(`${symbol}: Pipeline complete. ${candleCount} candles written.`);
+    if (fs.existsSync(ohlcFilePath)) {
+      _log.info(`${symbol} [${timeframe}]: Output already present, skipping (${ohlcFilePath})`);
+      continue;
+    }
+
+    const candleCount = await aggregateFileToOhlc(
+      rawFilePath,
+      ohlcFilePath,
+      timeframeLabelToInterval(timeframe)
+    );
+
+    _log.info(`${symbol} [${timeframe}]: ${candleCount} candles written.`);
+  }
+
+  _log.info(`${symbol}: Pipeline complete.`);
 }

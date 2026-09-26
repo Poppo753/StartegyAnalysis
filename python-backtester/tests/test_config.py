@@ -111,3 +111,20 @@ class TestLoadConfigInvalidEnv:
     def test_config_error_is_value_error_not_system_exit(self):
         assert issubclass(ConfigError, ValueError)
         assert not issubclass(ConfigError, SystemExit)
+
+
+class TestStrategiesEnv:
+    def test_default_is_momentum_drop(self, monkeypatch):
+        _set_valid_env(monkeypatch)
+        monkeypatch.delenv("STRATEGIES", raising=False)
+        assert load_config().strategies == ["momentum_drop"]
+
+    def test_two_strategies_parsed(self, monkeypatch):
+        _set_valid_env(monkeypatch)
+        monkeypatch.setenv("STRATEGIES", "momentum_drop, mean_reversion")
+        assert load_config().strategies == ["momentum_drop", "mean_reversion"]
+
+    def test_empty_strategies_falls_back_to_default(self, monkeypatch):
+        _set_valid_env(monkeypatch)
+        monkeypatch.setenv("STRATEGIES", "  ")
+        assert load_config().strategies == ["momentum_drop"]

@@ -163,7 +163,7 @@ Lane D (UI, Fase 8): scheletro avviabile dopo F1+F2 (formati risultati + study O
 
 **Obiettivo**: strategie come plug-in (non più hardcoded), interfaccia GPU-compatibile by-construction, metriche v3. Prerequisito: F0 chiusa.
 
-- [ ] **F1-S01 · `TradingStrategy` ABC in `src/strategy_base.py` (nuovo file)**
+- [x] **F1-S01 · `TradingStrategy` ABC in `src/strategy_base.py` (nuovo file)**
   Firma (vincolante, da v3 §5.3 + §6.1-nota-v3):
   ```python
   class TradingStrategy(ABC):
@@ -182,35 +182,35 @@ Lane D (UI, Fase 8): scheletro avviabile dopo F1+F2 (formati risultati + study O
   DoD: file creato, importabile, `test_strategy_base.py` verifica che classe fittizia senza un metodo astratto non istanziabile + che `parameter_space` usa solo kind ammessi.
   Dipendenze: F0. Stima: 0.5gg. Lane: A.
 
-- [ ] **F1-S02 · Refactoring `simulator.py` → `MomentumDropStrategy(TradingStrategy)`**
+- [x] **F1-S02 · Refactoring `simulator.py` → `MomentumDropStrategy(TradingStrategy)`**
   File: `src/simulator.py` (estrarre logica), nuovo `src/strategies/momentum_drop.py`, `src/strategies/__init__.py`.
   Operazione: spostare entry/exit/PnL invariati; `parameter_space` = X/Y/Z + hold/fees/slippage/direction correnti; `validate` = controlli v3 §5.3; `gpu_param_arrays` restituisce `x_values/y_values/z_values` come array tipizzati.
   DoD: backtest su dataset di riferimento (stesso CSV, stessi parametri) → tutti i trade e tutte le metriche identici al vecchio `run_backtest` entro 1e-9 (confronto CSV parsati, non byte-identical: la formattazione float può differire).
   Dipendenze: F1-S01. Stima: 1gg. Lane: A.
 
-- [ ] **F1-S03 · `MeanReversionZScore(TradingStrategy)` dimostrativa**
+- [x] **F1-S03 · `MeanReversionZScore(TradingStrategy)` dimostrativa**
   File: `src/strategies/mean_reversion.py` (logica v3 §5.3: MA rolling, z-score, entry/exit).
   DoD: produce segnali su dataset di riferimento; `validate` rifiuta `ma_period < 5`, `z_threshold ≤ 0`; test con serie sintetica (trend monotono → zero trade; sinusoide → almeno 1 entry + 1 exit; la strategia è long-only, NON entrambi i lati).
   Dipendenze: F1-S01. Stima: 0.75gg. Lane: A.
 
-- [ ] **F1-S04 · Routing `main.py` su lista strategie**
+- [x] **F1-S04 · Routing `main.py` su lista strategie**
   File: `main.py`, `src/config.py` (aggiungere `strategies: List[str]` da `.env`, default `["momentum_drop"]`).
   Operazione: loop strategie × engine esistente; `results_writer` con colonna/suffisso strategia; mantenere output esistenti invariati per `momentum_drop` (retrocompatibilità).
   DoD: run con 2 strategie → 2 set di risultati; run solo momentum → output identici a pre-Fase-1.
   Dipendenze: F1-S02, F1-S03. Stima: 0.75gg. Lane: A.
 
-- [ ] **F1-G01 · Test contratto GPU (vincolo v3 obbligatorio)**
+- [x] **F1-G01 · Test contratto GPU (vincolo v3 obbligatorio)**
   File: `tests/test_strategy_base.py` (estendere).
   Operazione: per ogni strategia registrata: `gpu_param_arrays(grid)` restituisce dict di `np.ndarray` tipizzati di lunghezza `len(grid)`; `gpu_metric_names()` lunghezza fissa = 8 (le metriche del kernel attuale).
   DoD: test verde per momentum + mean-reversion; chiude il vincolo §6.1-nota-v3 prima di Fase 3.
   Dipendenze: F1-S02, F1-S03. Stima: 0.25gg. Lane: A.
 
-- [ ] **F1-M01 · Sortino/Calmar/Expectancy in `metrics.py` (CHG-001)**
+- [x] **F1-M01 · Sortino/Calmar/Expectancy in `metrics.py` (CHG-001)**
   File: `src/metrics.py` (aggiungere `sortino_ratio(values, target=0.0)`, `calmar_ratio(annual_return, max_drawdown)`, `expectancy(win_rate, avg_win, avg_loss)` — solo numpy), `src/strategy.py` (`BacktestResult`: +3 campi float default 0.0), cablaggio in `calculate_metrics` con convenzione esistente (signal-only → `pnl_percent`, altrimenti `pnl`).
   DoD: valori verificati a mano su 3 casi (tutti-win / tutti-loss / misto con downside noto); `tests/test_metrics.py` esteso, verde.
   Dipendenze: nessuna. Stima: 0.5gg. Lane: A-parallela (eccezione esplicita alla sequenzialità Lane-A: file disgiunti da F1-S01…S04 — `metrics.py`, `strategy.py`, `tests/test_metrics.py` — lock §14.2 garantisce l'esclusione).
 
-- [ ] **F1-GATE · Chiusura Fase 1**
+- [x] **F1-GATE · Chiusura Fase 1**
   DoD: 2 strategie via `main.py`, metriche v3 nei risultati, test contratto GPU verdi, nessuna regressione su output momentum. Solo allora: via a F2 (Lane B/C già attive da F0).
 
 ---
@@ -366,22 +366,22 @@ Lane D (UI, Fase 8): scheletro avviabile dopo F1+F2 (formati risultati + study O
 
 **Obiettivo**: indicator factory standalone. Prerequisiti: F0 chiusa (disciplina di fase; tecnicamente basta il formato OHLC). **Lane B: parallela a F1/F2.**
 
-- [ ] **F6-E01 · `src/features/indicator_factory.py`: SMA/EMA/RSI/BB/ATR**
+- [x] **F6-E01 · `src/features/indicator_factory.py`: SMA/EMA/RSI/BB/ATR**
   Operazione: funzioni pure vettoriali (pandas/numpy, niente loop Python); convenzione NaN iniziali documentata (warmup = `max(periodi)` righe).
   DoD: confronto con valori noti (RSI-14 su serie fixture calcolata a mano con seconda implementazione indipendente); tolleranza 1e-8.
   Dipendenze: F0. Stima: 1gg. Lane: B.
 
-- [ ] **F6-E02 · MACD/OBV/VWAP**
+- [x] **F6-E02 · MACD/OBV/VWAP**
   Operazione: stesse convenzioni F6-E01; VWAP con tipico `(H+L+C)/3 × V` cumulato per sessione/giorno.
   DoD: stessi criteri F6-E01 su fixture dedicate.
   Dipendenze: F6-E01. Stima: 0.75gg. Lane: B.
 
-- [ ] **F6-E03 · Integrazione DataFrame: `add_features(df, list)`**
+- [x] **F6-E03 · Integrazione DataFrame: `add_features(df, list)`**
   Operazione: una chiamata aggiunge N colonne senza mutare l'input (copy-on-write); nomi colonne stabili (`sma_20`, `rsi_14`, …) registrati in `FEATURE_REGISTRY`.
   DoD: idempotenza (doppia chiamata → stesse colonne, nessun duplicato); test con lista vuota e indicatore ignoto (errore esplicito).
   Dipendenze: F6-E02. Stima: 0.5gg. Lane: B.
 
-- [ ] **F6-E04 · OHLC multi-timeframe lato Python (resample da 1s)**
+- [x] **F6-E04 · OHLC multi-timeframe lato Python (resample da 1s)**
   Operazione: `resample_ohlc(df_1s, rule)` con regole `1min/5min/1h/1d`; allineamento temporale documentato (label/closed convenzione).
   DoD (primaria, senza dipendenze esterne): OHLC 1m da fixture 1s sintetica verificata a mano (O=primo open, H=max high, L=min low, C=ultimo close, V=somma volumi, conteggio candele esatto). DoD (condizionale, solo se F7-T02 chiusa): stesso confronto contro CSV della pipeline TS.
   Dipendenze: F6-E03. Stima: 0.75gg. Lane: B.
@@ -392,17 +392,17 @@ Lane D (UI, Fase 8): scheletro avviabile dopo F1+F2 (formati risultati + study O
 
 **Obiettivo**: `ohlcAggregator.ts` parametrizzato + 1m/5m/1h/1d. Prerequisiti: F0-ts. **Lane C: parallela a tutto il Python.**
 
-- [ ] **F7-T01 · `aggregateToOhlc(interval_seconds)` in `ohlcAggregator.ts`**
+- [x] **F7-T01 · `aggregateToOhlc(interval_seconds)` in `ohlcAggregator.ts`**
   Operazione: generalizzare l'aggregatore 1s esistente a intervallo arbitrario (1/60/300/3600/86400); preservare path streaming; firma retrocompatibile (`aggregateToOhlc1s` = wrapper).
   DoD: output 1s identici a pre-modifica (byte-identical su fixture); memoria: confronto RSS prima/dopo su fixture grande (stesso intervallo, 1s vs 1s) → nessun aumento oltre +10%, altrimenti ottimizzare prima di chiudere.
   Dipendenze: F0-ts. Stima: 1gg. Lane: C.
 
-- [ ] **F7-T02 · Integrazione pipeline (`runPipeline.ts` / `downloadAggTrades.ts`)**
+- [x] **F7-T02 · Integrazione pipeline (`runPipeline.ts` / `downloadAggTrades.ts`)**
   Operazione: flag `--timeframes 1s,1m,5m,1h,1d` (verificare se `runPipeline.ts` ha già parsing argv: se no, aggiungerlo minimale); nomi file `ohlc_{tf}_{range}.csv`; skip intervalli già presenti (idempotenza).
   DoD: run con 2 timeframe → 2 set CSV coerenti (candele 1m = aggregazione di 60 candele 1s, test esaustivo su fixture).
   Dipendenze: F7-T01. Stima: 1gg. Lane: C.
 
-- [ ] **F7-T03 · Test `ohlcAggregator.test.ts` (estendere suite esistente)**
+- [x] **F7-T03 · Test `ohlcAggregator.test.ts` (estendere suite esistente)**
   Operazione: buchi temporali, DST/secondi mancanti, volumi zero, ultimo bucket parziale.
   DoD: `npx jest` verde inclusi i 4 edge case; coerenza 1s→1m su dati reali (campione UNIUSDT).
   Dipendenze: F7-T02. Stima: 0.75gg. Lane: C.
