@@ -98,60 +98,60 @@ Lane D (UI, Fase 8): scheletro avviabile dopo F1+F2 (formati risultati + study O
 
 > Stato verificato il 2026-09-25 (grounding): `config.py` solleva già `ConfigError` (mai `sys.exit`); warmup fast ha già la guardia `len(close) < 100 → return`; `aggregateToOhlc.ts` NON esiste (voce già chiusa); `xml.includes` NON trovato (verificare il parser attuale); `main.py` usa `sys.exit` solo al boundary CLI con try/except tipizzati (pattern documentato — da confermare, non da "correggere alla cieca").
 
-- [ ] **F0-01 · data_splitter: regression test (già corretto, pinnare il comportamento)**
+- [x] **F0-01 · data_splitter: regression test (già corretto, pinnare il comportamento)**
   File: `python-backtester/tests/test_data_splitter.py` (estendere), `src/gpu/data_splitter.py` (leggere, non modificare salvo bug).
   Operazione: aggiungere test che lo split è data-based — train tutto `<` validation su `datetime`, con dataset a cavallo di mese/anno e con buchi temporali.
   DoD: `pytest tests/test_data_splitter.py` verde; il test fallisce se qualcuno reintroduce split per indice.
   Dipendenze: nessuna. Stima: 0.5gg. Lane: A.
 
-- [ ] **F0-02 · bulkDownloader jszip: verifica + chiusura**
+- [x] **F0-02 · bulkDownloader jszip: verifica + chiusura**
   File: `src/binance/bulkDownloader.ts` (leggere).
   Operazione: confermare import/uso `jszip` e assenza di `child_process`/unzip esterno; se confermato, chiudere la voce con nota nel report Fase 0.
   DoD: evidenza (riga di import + chiamata `loadAsync`) citata nel report; nessuno `spawn`/`exec` nel file.
   Dipendenze: nessuna. Stima: 0.25gg. Lane: C.
 
-- [ ] **F0-03 · Retry semantics `binanceClient.ts`: decidere e pinnare**
+- [x] **F0-03 · Retry semantics `binanceClient.ts`: decidere e pinnare**
   File: `src/binance/binanceClient.ts`, nuovo `src/binance/binanceClient.test.ts` (o estendere suite esistente; runner: `jest.config.js` presente).
   Operazione: leggere il loop (`for attempt … MAX_RETRIES`) e il layer HTTP effettivo (verificare nel file: axios vs fetch nativo); decidere e DOCUMENTARE la semantica (tentativi totali = 1 + MAX_RETRIES retry); verificare backoff `2^(attempt-1)`; scrivere test mockando quel layer: (a) 429 poi successo → ok dopo N tentativi; (b) sempre 500 → throw dopo esaurimento; (c) 4xx non-retryable → throw immediato senza retry.
   DoD: semantica scritta in commento sopra `MAX_RETRIES`; 3 test verdi; nessun cambio di comportamento non documentato.
   Dipendenze: nessuna. Stima: 0.5gg. Lane: C.
 
-- [ ] **F0-04 · Merge barrier `downloadAggTrades.ts`: verifica (barrier prob. esistente) + test**
+- [x] **F0-04 · Merge barrier `downloadAggTrades.ts`: verifica (barrier prob. esistente) + test**
   File: `src/pipeline/downloadAggTrades.ts` (rr.85/108 `await`, merge r.120), `src/utils/rateLimiter.ts` (`runWithConcurrency` r.57: verificare che attenda TUTTI i job e propaghi gli errori), `src/pipeline/downloadAggTrades.test.ts` (ESISTE già con test `mergeDayFiles` — estendere, non creare).
   Operazione: (a) leggere `runWithConcurrency`: se non attende tutti i job o ingoia errori → fix lì; (b) confermare che `cleanupDir` è sync (`: void` r.331 — in tal caso nessun fix); (c) estendere il test esistente con 2 giorni simulati a delay invertiti (il giorno 2 finisce prima del giorno 1) → il merge deve vedere entrambi i file completi e ordinati. Esito atteso onesto: barrier già presente → si pinna con test, non si aggiunge codice.
   DoD: test delay-invertiti verde nel file esistente; evidenza nel report se qualche `await` mancava davvero.
   Dipendenze: nessuna. Stima: 0.5gg. Lane: C.
 
-- [ ] **F0-05 · XML `bulkAvailability.ts`: audit + pinning (impl. attuale già decente)**
+- [x] **F0-05 · XML `bulkAvailability.ts`: audit + pinning (impl. attuale già decente)**
   File: `src/binance/bulkAvailability.ts` (verificato: regex con `escapeRegex` su `<Key>…</Key>` rr.39–41, NON `includes`; fallback graceful r.45–48: se il check fallisce → REST API).
   Operazione: test con XML valido / malformato / vuoto / timeout axios / mese con >100 file (verificare `max-keys=100` non tronca: daily → max 31 file/mese, atteso ok); sostituire con parsing strutturato SOLO se un caso fallisce.
   DoD: 5 casi verdi oppure 1 fix mirato + 5 casi verdi; esito atteso onesto: pinning, non rewrite.
   Dipendenze: nessuna. Stima: 0.5gg. Lane: C.
 
-- [ ] **F0-06 · `jsonlWriter.ts`: audit chiamanti + instradamento per dimensione**
+- [x] **F0-06 · `jsonlWriter.ts`: audit chiamanti + instradamento per dimensione**
   File: `src/storage/jsonlWriter.ts` (confermato: `readAggTradesJsonl` carica tutto in RAM r.69, `readAggTradesJsonlStream` esiste r.108), tutti i chiamanti di `readAggTradesJsonl`.
   Operazione: per ogni chiamante, classificare (file piccoli di test vs file storici GB); instradare i secondi sullo stream; aggiungere guardia: `readAggTradesJsonl` solleva errore esplicito sopra soglia (dimensione file su disco come proxy, default 256MB, costante nominata) invece di OOM silenzioso.
   DoD: nessun chiamante su path storici usa la versione full-RAM; test con file sintetico sopra soglia → errore esplicito, non crash.
   Dipendenze: nessuna. Stima: 0.5gg. Lane: C.
 
-- [ ] **F0-07 · Warmup fast: regression test (guardia già presente)**
+- [x] **F0-07 · Warmup fast: regression test (guardia già presente)**
   File: `python-backtester/src/fast/fast_runner.py` (guardia `len(close) < 100 → return` già a r.191–192), `tests/` (nuovo `test_fast_warmup.py` o estensione).
   Operazione: test con dataset di 10/50/99/100/101 righe → nessun crash, risultati identici con/senza warmup quando applicabile.
   DoD: 5 casi verdi; la guardia esistente è pinnata contro regressioni future.
   Dipendenze: nessuna. Stima: 0.25gg. Lane: A.
 
-- [ ] **F0-08 · `sys.exit` boundary audit (atteso: già conforme, pinnare)**
+- [x] **F0-08 · `sys.exit` boundary audit (atteso: già conforme, pinnare)**
   File: `src/config.py` (verificare: solo `ConfigError`, zero `sys.exit` — atteso già così), `main.py` rr.91/107/122/153 (confermare che sono tutti boundary CLI con except tipizzato: `NumbaMissingError`, `ConfigError`, `DataLoadError`), `stoploss_analysis.py:151` + `trade_profile.py:396` (verificato: entrambi script CLI con `argparse`, guardie `__main__` e docstring "sys.exit solo nel blocco __main__" — atteso già conformi).
   Operazione: per ogni sito, classificare boundary-vs-libreria; convertire in `raise` SOLO se si trova codice eseguibile all'import (fuori da funzioni/blocchi `__main__`); estendere `tests/test_config.py` con: `.env` invalido → `load_config()` solleva `ConfigError` (mai exit) — la testabilità è la prova che il pattern serve.
   DoD: zero `sys.exit` fuori da `main()`/blocchi `__main__`; test `ConfigError` verde; esito atteso onesto: nessun fix, solo pinning.
   Dipendenze: nessuna. Stima: 0.5gg. Lane: A.
 
-- [ ] **F0-09 · `aggregateToOhlc.ts`: chiudere la voce (file assente)**
+- [x] **F0-09 · `aggregateToOhlc.ts`: chiudere la voce (file assente)**
   Operazione: `grep` di riferimenti residui (`aggregateToOhlc`) in `src/` e `docs/`; se nessun riferimento attivo, chiudere con nota nel report; se esistono import rotti, rimuoverli.
   DoD: zero riferimenti attivi oppure zero file orfani; voce chiusa nel report.
   Dipendenze: nessuna. Stima: 0.25gg. Lane: C.
 
-- [ ] **F0-10 · Report bug Fase 0 con priorità (output di fase)**
+- [x] **F0-10 · Report bug Fase 0 con priorità (output di fase)**
   File: nuovo `docs/analysis/10_phase0_report.md` (breve).
   Operazione: per ogni F0-01…F0-09: verdetto (corretto / corretto-ora / già-ok), evidenza (file:riga o test), priorità residua.
   DoD: report completo; zero voci "da verificare" rimaste; via libera a Fase 1 solo con report chiuso.

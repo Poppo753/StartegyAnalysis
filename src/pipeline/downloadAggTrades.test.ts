@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { isTradeInWindow, mergeDayFiles } from './downloadAggTrades';
+import { runWithConcurrency, delay } from '../utils/rateLimiter';
 import { writeAggTradesJsonl, readAggTradesJsonl } from '../storage/jsonlWriter';
 import { BinanceAggTrade } from '../binance/types';
 
@@ -108,5 +109,38 @@ describe('mergeDayFiles', () => {
     expect(total).toBe(0);
     const merged = await readAggTradesJsonl(finalFp);
     expect(merged).toEqual([]);
+  });
+
+  it('barrier: giorno 2 finisce prima del giorno 1, merge vede entrambi completi e ordinati', async () => {
+    const base = 1_700_000_000_000;
+    const completionOrder: string[] = [];
+    const days = [
+      { start: '2024-01-01', delayMs: 60 },
+      { start: '2024-01-02', delayMs: 5 },
+    ];
+
+    // runWithConcurrency deve attendere TUTTI i job prima di risolvere:
+    // se restituisse presto, il merge vedrebbe file mancanti/parziali.
+    const results = await runWithConcurrency(days, 2, async (day) => {
+      await delay(day.delayMs);
+      const fp = path.join(tmpDir, `aggTrades_${day.start}.jsonl.gz`);
+      const idBase = day.start === '2024-01-01' ? 1 : 11;
+      const trades = [makeTrade(idBase, base), makeTrade(idBase + 1, base + 500)];
+      await writeAggTradesJsonl(trades, fp, false);
+      completionOrder.push(day.start);
+      return { dayFilePath: fp, start: day.start, trades: trades.length };
+    });
+
+    // Delay invertiti: il giorno 2 deve aver finito per primo.
+    expect(completionOrder).toEqual(['2024-01-02', '2024-01-01']);
+
+    const finalFp = path.join(tmpDir, 'merged-inverted.jsonl.gz');
+    const total = await mergeDayFiles(results, finalFp);
+
+    expect(total).toBe(4);
+    const merged = await readAggTradesJsonl(finalFp);
+    expect(merged).toHaveLength(4);
+    // Ordinati per giorno nonostante l'ordine di completamento invertito.
+    expect(merged.map((t) => t.a)).toEqual([1, 2, 11, 12]);
   });
 });

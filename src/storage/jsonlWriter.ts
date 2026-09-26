@@ -66,12 +66,29 @@ export async function writeAggTradesJsonl(
 }
 
 /**
+ * Maximum file size (on-disk bytes, as OOM proxy) allowed for full-RAM read.
+ * Larger files must use readAggTradesJsonlStream.
+ */
+export const MAX_JSONL_FULL_READ_BYTES = 256 * 1024 * 1024; // 256MB
+
+/**
  * Read aggregate trades from a JSONL(.gz) file using streaming.
  * Returns an array of trades. For very large files, use readAggTradesJsonlStream.
  */
-export async function readAggTradesJsonl(filePath: string): Promise<BinanceAggTrade[]> {
+export async function readAggTradesJsonl(
+  filePath: string,
+  maxBytes: number = MAX_JSONL_FULL_READ_BYTES
+): Promise<BinanceAggTrade[]> {
   if (!fs.existsSync(filePath)) {
     return [];
+  }
+
+  const size = fs.statSync(filePath).size;
+  if (size > maxBytes) {
+    throw new Error(
+      `Refusing to fully load ${filePath} (${size} bytes > ${maxBytes} bytes): ` +
+        `use readAggTradesJsonlStream for large files to avoid OOM`
+    );
   }
 
   const isGz = filePath.endsWith('.gz');

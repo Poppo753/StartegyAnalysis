@@ -3,6 +3,8 @@ import { BinanceAggTrade, AggTradesParams } from './types';
 import { delay, GlobalRateLimiter } from '../utils/rateLimiter';
 import { logger } from '../utils/logger';
 
+// Retry semantics: total attempts = 1 + MAX_RETRIES retries.
+// Backoff between attempts: RETRY_BASE_DELAY_MS * 2^(attempt-1).
 const MAX_RETRIES = 5;
 const RETRY_BASE_DELAY_MS = 1000;
 
