@@ -27,6 +27,7 @@ export interface SpawnConfig {
   nTrials: number;
   jobs: number;
   validationMode: string;
+  overrides?: Record<string, string>;
   repoRoot: string;
   logRotationThreshold?: number; // bytes, for testing
 }
@@ -169,7 +170,7 @@ export class RunSpawner {
 
     const options: SpawnOptions = {
       cwd,
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      env: { ...process.env, ...config.overrides, PYTHONUNBUFFERED: "1" },
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
     };

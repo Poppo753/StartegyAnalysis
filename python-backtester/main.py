@@ -14,6 +14,9 @@ Orchestrazione completa:
 
 import sys
 import os
+import json
+import math
+import hashlib
 
 # Forza encoding UTF-8 per la console Windows
 if sys.stdout.encoding != "utf-8":
@@ -428,6 +431,31 @@ def run_optuna_engine(
 
     cls = STRATEGY_REGISTRY[strategy]
     strat_obj = cls()
+    parameter_space = strat_obj.parameter_space()
+    raw_space = os.getenv("OPTUNA_SPACE", "").strip()
+    if raw_space:
+        try:
+            requested = json.loads(raw_space)
+            if not isinstance(requested, dict):
+                raise ValueError("oggetto JSON richiesto")
+            parameter_space = dict(parameter_space)
+            for key, bounds in requested.items():
+                if key not in parameter_space or not isinstance(bounds, list) or len(bounds) != 2:
+                    raise ValueError(f"parametro non valido: {key}")
+                original = parameter_space[key]
+                lo, hi = bounds
+                integer = original[2].startswith("int")
+                if (isinstance(lo, bool) or isinstance(hi, bool) or
+                        not isinstance(lo, (int, float)) or not isinstance(hi, (int, float)) or
+                        not math.isfinite(lo) or not math.isfinite(hi) or
+                        (integer and (not float(lo).is_integer() or not float(hi).is_integer())) or
+                        lo < original[0] or hi > original[1] or lo > hi or
+                        (original[2].endswith("_log") and lo <= 0)):
+                    raise ValueError(f"limiti non validi: {key}")
+                parameter_space[key] = (lo, hi, original[2])
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            print(f"❌ ERRORE spazio Optuna: {exc}")
+            sys.exit(1)
     is_mr = type(strat_obj).__name__ in (
         "MeanReversionZScore",
     ) or strategy in (
@@ -444,6 +472,9 @@ def run_optuna_engine(
     }
     storage = f"sqlite:///{study_db}"
     study_name = f"optuna_{symbol}_{strategy}"
+    if raw_space:
+        space_id = hashlib.sha256(json.dumps(parameter_space, sort_keys=True).encode()).hexdigest()[:8]
+        study_name = f"{study_name}_{space_id}"
     print(f"\n  🔧 Engine: OPTUNA (TPE)")
     print(f"  📦 Strategia: {strategy}")
     print(f"  🎯 Trial: {n_trials} | jobs: {n_jobs} | db: {study_db} | study: {study_name}")
@@ -455,6 +486,7 @@ def run_optuna_engine(
         storage=storage,
         study_name=study_name,
         n_jobs=n_jobs,
+        parameter_space_override=parameter_space,
     )
     out = opt.optimize(df, n_trials=int(n_trials), n_jobs=int(n_jobs))
     best_params = out["best_params"]
@@ -533,8 +565,8 @@ def run_standard_engine_mean_reversion(
     from src.strategies.mean_reversion import MeanReversionZScore
 
     mr = MeanReversionZScore()
-    ma_periods = [10, 20]
-    z_thresholds = [1.0, 2.0]
+    ma_periods = config.ma_periods
+    z_thresholds = config.z_thresholds
     print(f"\n  🔧 Engine: STANDARD")
     print(f"  📦 Strategia: {strategy} (long-only)")
     print(f"\n  🔄 Esecuzione {len(ma_periods) * len(z_thresholds)} combinazioni...")
@@ -648,16 +680,21 @@ def main(argv: Optional[List[str]] = None) -> None:
             print(f"❌ ERRORE configurazione: --jobs/OPTUNA_JOBS deve essere > 0 ({n_jobs})")
             sys.exit(1)
 
-    # --- Genera griglia parametri (usata anche per conteggio) ---
-    params_list = generate_parameter_grid(config)
-    n_combinations = len(params_list)
-
     # --- Valida strategie richieste (F1-S04; CLI --strategy riusa config.strategies) ---
     unknown = [s for s in strategies if s not in STRATEGY_REGISTRY]
     if unknown:
         print(f"❌ ERRORE configurazione: strategie sconosciute: {unknown} "
               f"(disponibili: {sorted(STRATEGY_REGISTRY)})")
         sys.exit(1)
+
+    # La griglia X/Y/Z serve solo ai runner grid di momentum_drop.
+    if search == "grid" and "momentum_drop" in strategies:
+        params_list = generate_parameter_grid(config)
+        n_combinations = len(params_list)
+    else:
+        params_list = []
+        n_combinations = (n_trials if search == "optuna"
+                          else len(config.ma_periods) * len(config.z_thresholds))
 
     # --- Stampa riepilogo ---
     print_config_summary(
@@ -756,7 +793,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     output_dir = run_standard_engine_mean_reversion(
                         config, symbol, df_engine, strategy=strategy,
                     )
-                    n_proxy = 4  # griglia dimostrativa 2x2 F1-S04
+                    n_proxy = len(config.ma_periods) * len(config.z_thresholds)
                 else:
                     print(f"  ❌ ERRORE: strategia {strategy} registrata ma senza "
                           f"runner grid standard dedicato.")

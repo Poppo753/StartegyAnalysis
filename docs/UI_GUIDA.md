@@ -39,8 +39,8 @@ Home → New Run (compili) → Runs (guardi il log) → Results (leggi i numeri)
 
 ## 4. Cosa puoi scegliere nel form
 
-- **Simbolo**: solo quelli con dati per il range configurato nel `.env` (vedi §7)
-- **Strategia**: `momentum_drop`, `mean_reversion` (dal listing reale di `python-backtester/src/strategies/`)
+- **Simbolo e dataset**: scegli un file OHLC realmente disponibile, con timeframe e periodo (vedi §7)
+- **Strategia**: `momentum_drop`, `mean_reversion` (dal registry Python e dalle capacità effettive)
 - **Motore**: `standard`, `fast` (Numba), `gpu`
 - **Ricerca**: `grid` (esaustiva) o `optuna` (intelligente, con pruning)
 - **Trial / Jobs**: quanti tentativi, quanti in parallelo
@@ -85,7 +85,7 @@ cd python-backtester
 
 ## 7. Comportamenti onesti (le scelte documentate)
 
-- **Simboli**: `/api/config` offre solo simboli con un file OHLC per l'esatto range `START_DATE..END_DATE` del `.env`. Per un altro range, cambia il `.env` (la UI non lo fa al posto tuo, per non mentirti sullo stato dei dati).
+- **Simboli**: `/api/config` elenca i dataset presenti in `data/{SIMBOLO}/ohlc/`. Ogni run usa il timeframe e le date del file selezionato. Il campo legacy `symbols` continua a indicare quelli compatibili con il range del `.env`.
 - **Progresso**: è una **stima** (parsing del log + tempo), etichettata come tale. Nessuna barra finta.
 - **Riconciliazione**: se il server muore durante un run, quello resta `unknown` — non inventiamo un esito. Lo decidi tu.
 - **Coda GPU**: un solo run GPU alla volta, gli altri in coda.
@@ -108,7 +108,7 @@ cd python-backtester
 | Sintomo | Causa probabile | Cosa fare |
 |---|---|---|
 | `venvOk: false` | venv non trovato | `python-backtester/.venv/Scripts/python.exe` deve esistere |
-| Simbolo non in lista | dati mancanti per il range del `.env` | scarica i dati con la pipeline TS, o cambia il range |
+| Simbolo non in lista | nessun dataset OHLC nella cartella del simbolo | genera i dati con la pipeline TS |
 | Run `failed` | guarda il log nella vista Runs | l'errore Python è nel log, riga per riga |
 | `unknown` dopo un crash | il server è morto col run attivo | riconcilia dalla vista Runs |
 | Porta 3000 occupata | un'altra istanza attiva | `npx tsx src/dashboard/server.ts --port 3100` |
@@ -132,3 +132,9 @@ cd python-backtester
 La navigazione usa ora le etichette **Panoramica**, **Nuovo backtest**, **Esecuzioni**, **Risultati** e **Report**. Il form raggruppa impostazioni principali e parametri avanzati; le viste Risultati ed Esecuzioni espongono filtri, stati e azioni in pannelli dedicati. Il layout si adatta anche a schermi stretti e offre temi chiaro e scuro.
 
 Se le API di stato, configurazione o esecuzioni non rispondono, la vista mostra un errore esplicito invece di sostituire i dati con esempi. I risultati dimostrativi restituiti dal server quando mancano i CSV restano disponibili, ma sono etichettati come tali. Il log indica quando è stato ruotato o quando resta un blocco di righe da caricare.
+
+## Parametri per singola esecuzione e strategie
+
+Il modulo **Nuovo backtest** permette di scegliere un dataset OHLC esistente, mostrando timeframe e date. La scelta imposta `TIMEFRAME`, `START_DATE` ed `END_DATE` solo per quell'esecuzione. Nelle sezioni espandibili si possono impostare griglie X/Y/Z, periodi e soglie della mean reversion, capitale, posizione, commissioni, slippage, direzione, durata massima, parametri Fast/GPU, quote di training e validazione, database Optuna e filtri. Con Optuna si possono anche restringere i limiti dei parametri della strategia. Lasciando vuoto un campo si usa il valore del `.env`.
+
+Le strategie attualmente **eseguibili** sono `momentum_drop` (standard, Fast e GPU) e `mean_reversion` (standard). Entrambe supportano griglia e Optuna. `mean_reversion_zscore` è un alias di `mean_reversion`, non una terza strategia. `mia` è registrata come esempio, ma non ha ancora un runner di backtest: il modulo la segnala come in sviluppo e non consente di avviarla. Il catalogo viene letto dal registry Python, quindi il form e la validazione usano le stesse capacità effettive.

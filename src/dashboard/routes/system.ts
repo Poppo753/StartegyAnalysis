@@ -22,6 +22,8 @@ import {
   VALIDATION_MODES,
   listStrategies,
 } from "../lib/validateRun";
+import { listStrategyCatalog, StrategyInfo } from "../lib/strategyCatalog";
+import { RUN_OPTIONS, RunOptionSpec } from "../lib/runOptions";
 import { RunRecord, RunStore, createRunStore } from "../lib/runStore";
 import { PythonBinInfo } from "../lib/runSpawn";
 import { REPO_ROOT } from "./results";
@@ -43,9 +45,12 @@ export interface FlagSpec {
 
 export interface RunConfig {
   symbols: string[];
+  datasetSymbols: string[];
   strategies: string[];
+  strategyCatalog: StrategyInfo[];
   engine: string[];
   flags: FlagSpec[];
+  runOptions: RunOptionSpec[];
   /**
    * Additive (not part of the D3 frozen contract): per-symbol data
    * availability for the configured .env date range. The UI uses it to show
@@ -229,6 +234,7 @@ export interface SymbolAvailability {
   hasConfiguredRange: boolean;
   availableTimeframes: string[];
   hasDataForRange: boolean;
+  datasets: { file: string; timeframe: string; start: string; end: string }[];
 }
 
 /**
@@ -251,6 +257,19 @@ export function listSymbolAvailability(
     if (!entry.isDirectory()) continue;
     const files = listOhlcFiles(path.join(dataRoot, entry.name));
     if (files.length === 0) continue;
+    const datasets: SymbolAvailability["datasets"] = [];
+    const ohlcDir = path.join(dataRoot, entry.name, "ohlc");
+    try {
+      for (const file of fs.readdirSync(ohlcDir)) {
+        const range = ohlcRange(file);
+        const timeframe = ohlcTimeframe(file);
+        if (range && timeframe && /^\d{4}-\d{2}-\d{2}$/.test(range.start) &&
+            /^\d{4}-\d{2}-\d{2}$/.test(range.end) &&
+            fs.statSync(path.join(ohlcDir, file)).isFile()) {
+          datasets.push({ file, timeframe, start: range.start, end: range.end });
+        }
+      }
+    } catch { /* Flat legacy layout has no runnable dataset directory. */ }
     const timeframes = Array.from(
       new Set(files.map((f) => ohlcTimeframe(f) as string).filter(Boolean)),
     ).sort();
@@ -265,6 +284,7 @@ export function listSymbolAvailability(
       hasConfiguredRange,
       availableTimeframes: timeframes,
       hasDataForRange,
+      datasets,
     });
   }
   return out.sort((a, b) => a.symbol.localeCompare(b.symbol));
@@ -353,9 +373,12 @@ export function getRunConfig(deps: SystemDeps): RunConfig {
       : null;
   return {
     symbols: availability.filter((s) => s.hasDataForRange).map((s) => s.symbol),
+    datasetSymbols: availability.filter((s) => s.datasets.length > 0).map((s) => s.symbol),
     strategies: deps.strategies ?? listStrategies(),
+    strategyCatalog: listStrategyCatalog(),
     engine: ENGINES.slice(),
     flags: RUN_FLAGS.map((f) => ({ ...f, values: f.values ? f.values.slice() : undefined })),
+    runOptions: RUN_OPTIONS.map((option) => ({ ...option, values: option.values?.slice(), current: env[option.key] ?? "" })),
     symbolAvailability: availability,
     configuredRange,
   };

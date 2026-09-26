@@ -316,4 +316,17 @@ describe("RunSpawner process management", () => {
     expect(result.success).toBe(false);
     expect(store.load("missing")?.status).toBe("failed");
   });
+
+  test("passes overrides only to the selected child process", async () => {
+    fs.writeFileSync(path.join(root, "main.py"), "console.log(process.env.X_VALUES || 'unset');\n");
+    store.create(makeRecord({ id: "with-override" }));
+    store.create(makeRecord({ id: "without-override" }));
+    const withOverride = { ...config("with-override", "standard"), overrides: { X_VALUES: "0.2,0.5" } };
+    expect((await spawner.spawn(withOverride)).success).toBe(true);
+    expect((await spawner.spawn(config("without-override", "standard"))).success).toBe(true);
+    expect(fs.readFileSync(path.join(root, "runs", "with-override.log"), "utf8"))
+      .toContain("0.2,0.5");
+    expect(fs.readFileSync(path.join(root, "runs", "without-override.log"), "utf8"))
+      .not.toContain("0.2,0.5");
+  });
 });

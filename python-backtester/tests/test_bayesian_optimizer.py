@@ -100,6 +100,18 @@ def _grid_optimum():
 
 
 class TestBayesianOptimizerParity:
+    def test_custom_parameter_bounds_are_used_for_every_trial(self):
+        opt = BayesianOptimizer(
+            TinyGridStrategy(), n_startup_trials=2, base_params=BASE_PARAMS, seed=7,
+            parameter_space_override={"a": (2, 2, "int"), "b": (1, 1, "int"), "c": (0, 2, "int")},
+        )
+        out = opt.optimize(_dummy_df(), n_trials=5)
+        assert len(out["study"].trials) == 5
+        assert all("a" not in trial.params and "b" not in trial.params
+                   for trial in out["study"].trials)
+        assert out["best_params"]["a"] == 2
+        assert out["best_params"]["b"] == 1
+
     def test_budget_ge_space_finds_grid_optimum_4_of_5_seeds(self):
         grid_best = _grid_optimum()
         df = _dummy_df()

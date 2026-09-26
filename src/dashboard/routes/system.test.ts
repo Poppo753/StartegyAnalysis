@@ -179,6 +179,17 @@ describe("routes/system — /api/config", () => {
     expect(config.engine).toEqual(["standard", "fast", "gpu"]);
     expect(config.configuredRange).toEqual({ start: "2026-01-01", end: "2026-01-02" });
     expect(config.symbolAvailability.length).toBeGreaterThan(0);
+    expect(config.strategyCatalog.find((item) => item.name === "mia")?.runnable).toBe(false);
+    expect(config.runOptions.some((item) => item.key === "X_VALUES")).toBe(true);
+  });
+
+  test("dataset selectors use exact files in the loader's nested layout", () => {
+    fs.writeFileSync(path.join(dataRoot, "UNIUSDT", "ohlc", "ohlc_5m_2026-02-01_2026-02-02.csv"), "a,b\n");
+    const config = getRunConfig(deps);
+    expect(config.datasetSymbols).toEqual(["UNIUSDT"]);
+    expect(config.symbolAvailability.find((item) => item.symbol === "UNIUSDT")?.datasets)
+      .toContainEqual({ file: "ohlc_5m_2026-02-01_2026-02-02.csv", timeframe: "5m",
+        start: "2026-02-01", end: "2026-02-02" });
   });
 
   test("flags match the frozen D3 allowlist", () => {
@@ -212,12 +223,15 @@ describe("routes/system — /api/config", () => {
     const r = call("GET", "/api/config", deps);
     expect(r.handled).toBe(true);
     expect(r.code).toBe(200);
-    // D3 frozen fields + the two additive availability fields.
+    // Core fields plus dataset, strategy and run option metadata.
     expect(Object.keys(r.body).sort()).toEqual([
       "configuredRange",
+      "datasetSymbols",
       "engine",
       "flags",
+      "runOptions",
       "strategies",
+      "strategyCatalog",
       "symbolAvailability",
       "symbols",
     ]);

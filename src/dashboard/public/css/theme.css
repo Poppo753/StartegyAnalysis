@@ -22,3 +22,7 @@ pre{background:var(--code-bg);border:1px solid var(--border);border-radius:10px;
 .sort-button{padding:0;min-height:0;border:0;border-radius:0;background:transparent;color:inherit;font:inherit;letter-spacing:inherit;text-transform:inherit;white-space:nowrap}.sort-button:hover{border:0;background:transparent;color:var(--accent)}
 .chart-legend{display:flex;gap:17px;align-items:center;color:var(--muted);font-size:11px;margin-top:12px}.chart-legend span{display:inline-flex;align-items:center;gap:6px}.chart-legend i{width:14px;height:3px;border-radius:4px;background:#4da3ff}.chart-legend .drawdown i{background:#f85149}
 @media(max-width:760px){.sidebar{position:relative}.sidebar-bottom{display:block;position:absolute;right:16px;top:12px;margin:0;padding:0;border:0}.sidebar-bottom p{display:none}.theme-toggle{width:auto;min-height:36px;padding:6px 9px;gap:6px;font-size:11px}}
+.run-option-group{padding:0 22px 22px;border-top:1px solid var(--border)}.run-option-group summary{cursor:pointer;padding:20px 0 8px;color:var(--fg);font:700 17px 'Space Grotesk','Segoe UI',sans-serif;list-style-position:inside}.run-option-group>.note{margin:0 0 18px}.run-option-group .form-grid{padding-bottom:4px}.run-option-group[open] summary{color:var(--accent)}
+@media(max-width:760px){.run-option-group{padding:0 16px 18px}}
+.bound-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}.bound-pair input{width:100%;min-width:0}
+[hidden]{display:none!important}

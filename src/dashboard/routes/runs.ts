@@ -15,6 +15,7 @@
  */
 import * as fs from "fs";
 import * as http from "http";
+import * as path from "path";
 import { URL } from "url";
 import { RunRecord, RunStore, createRunStore } from "../lib/runStore";
 import { PythonBinInfo, SpawnConfig, SpawnResult, createRunSpawner } from "../lib/runSpawn";
@@ -25,6 +26,7 @@ import {
   DATA_ROOT,
   RunSummary,
   getRunConfig,
+  readEnvFile,
   resolvePythonBin,
   runSummary,
 } from "./system";
@@ -237,6 +239,7 @@ function enqueueSpawn(record: RunRecord, d: RunsDeps): void {
     nTrials: record.nTrials,
     jobs: record.jobs,
     validationMode: record.validationMode,
+    overrides: record.overrides,
     repoRoot: BACKTESTER_ROOT,
   };
   // Deferred by one microtask so the 201 still reports the real "queued".
@@ -274,7 +277,11 @@ async function createRun(
     return;
   }
 
-  const validated = validateRunInput(body, d.dataRoot ?? DATA_ROOT);
+  const validated = validateRunInput(
+    body,
+    d.dataRoot ?? DATA_ROOT,
+    readEnvFile(d.envPath ?? path.join(BACKTESTER_ROOT, ".env")),
+  );
   if (!validated.ok || !validated.data) {
     sendJson(res, 400, { error: validated.error ?? "invalid run" });
     return;
@@ -288,7 +295,7 @@ async function createRun(
     envPath: d.envPath,
     strategies: d.strategies,
   });
-  if (!config.symbols.includes(input.symbol)) {
+  if (!(input.dataset ? config.datasetSymbols : config.symbols).includes(input.symbol)) {
     sendJson(res, 400, { error: `unknown symbol: ${input.symbol}` });
     return;
   }

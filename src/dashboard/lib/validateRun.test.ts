@@ -50,6 +50,41 @@ describe("validateRunInput", () => {
     });
   });
 
+  test("an exact nested dataset overrides timeframe and dates for this run", () => {
+    const dataset = "ohlc_5m_2026-02-01_2026-02-02.csv";
+    fs.mkdirSync(path.join(dataRoot, "DCRUSDT", "ohlc"));
+    fs.writeFileSync(path.join(dataRoot, "DCRUSDT", "ohlc", dataset), "a,b\n");
+    const res = validateRunInput({ symbol: "DCRUSDT", dataset, strategy: "momentum_drop",
+      engine: "standard", search: "grid", nTrials: 2, jobs: 1, validationMode: "off",
+      overrides: { X_VALUES: "0.2,0.5" } }, dataRoot);
+    expect(res.ok).toBe(true);
+    expect(res.data?.overrides).toMatchObject({ X_VALUES: "0.2,0.5", X_RANGE: "",
+      TIMEFRAME: "5m", START_DATE: "2026-02-01", END_DATE: "2026-02-02" });
+    expect(validateRunInput({ symbol: "DCRUSDT", dataset: "ohlc_5m_2026-02-03_2026-02-04.csv",
+      strategy: "momentum_drop", engine: "standard", search: "grid", nTrials: 2,
+      jobs: 1, validationMode: "off" }, dataRoot).error).toMatch(/dataset not available/);
+  });
+
+  test("only runnable strategies and compatible engines are accepted", () => {
+    const base = { symbol: "DCRUSDT", engine: "standard", search: "grid",
+      nTrials: 2, jobs: 1, validationMode: "off" };
+    expect(validateRunInput({ ...base, strategy: "mia" }, dataRoot).error).toMatch(/invalid strategy/);
+    expect(validateRunInput({ ...base, strategy: "mean_reversion", engine: "fast" }, dataRoot).error)
+      .toMatch(/does not support/);
+  });
+
+  test("Optuna bounds are checked against the strategy parameter space", () => {
+    const base = { symbol: "DCRUSDT", strategy: "mean_reversion", engine: "standard",
+      search: "optuna", nTrials: 2, jobs: 1, validationMode: "off" };
+    const valid = validateRunInput({ ...base, searchSpace: { ma_period: [20, 50] } }, dataRoot);
+    expect(valid.ok).toBe(true);
+    expect(valid.data?.overrides?.OPTUNA_SPACE).toBe('{"ma_period":[20,50]}');
+    expect(validateRunInput({ ...base, searchSpace: { ma_period: [1, 50] } }, dataRoot).error)
+      .toMatch(/invalid Optuna bounds/);
+    expect(validateRunInput({ ...base, searchSpace: { unknown: [1, 2] } }, dataRoot).error)
+      .toMatch(/invalid Optuna bounds/);
+  });
+
   test("invalid symbol fails", () => {
     const res = validateRunInput({
       symbol: "INVALID",

@@ -153,6 +153,7 @@ class BayesianOptimizer:
         storage: Optional[str] = None,
         study_name: Optional[str] = None,
         n_jobs: int = 1,
+        parameter_space_override: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.strategy = strategy
         self.n_startup_trials = int(n_startup_trials)
@@ -163,6 +164,7 @@ class BayesianOptimizer:
         self.study_name = study_name
         self.n_jobs = int(n_jobs)
         self.study: Optional[optuna.Study] = None
+        self.parameter_space_override = parameter_space_override
 
     def _evaluate(
         self, sampled: Dict[str, Any], df: Any
@@ -190,7 +192,7 @@ class BayesianOptimizer:
 
     def _objective(self, df: Any):
         def _fn(trial: optuna.Trial) -> float:
-            space = self.strategy.parameter_space()
+            space = self.parameter_space_override or self.strategy.parameter_space()
             sampled = suggest_params(trial, space)
             # TrialPruned (parametri invalidi) si propaga: Optuna lo registra
             # come PRUNED, mai come FAIL/errore.
@@ -243,8 +245,11 @@ class BayesianOptimizer:
             n_jobs=jobs,
             show_progress_bar=show_progress,
         )
+        space = self.parameter_space_override or self.strategy.parameter_space()
+        fixed = {name: int(lo) if kind.startswith("int") else float(lo)
+                 for name, (lo, hi, kind) in space.items() if lo == hi}
         return {
-            "best_params": dict(self.study.best_params),
+            "best_params": {**dict(self.study.best_params), **fixed},
             "best_value": float(self.study.best_value),
             "study": self.study,
             "n_trials": int(n_trials),

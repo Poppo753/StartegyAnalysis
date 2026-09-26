@@ -128,3 +128,19 @@ class TestStrategiesEnv:
         _set_valid_env(monkeypatch)
         monkeypatch.setenv("STRATEGIES", "  ")
         assert load_config().strategies == ["momentum_drop"]
+
+
+class TestMeanReversionGridEnv:
+    def test_grid_values_are_configurable(self, monkeypatch):
+        _set_valid_env(monkeypatch)
+        monkeypatch.setenv("MA_PERIODS", "12,24,48")
+        monkeypatch.setenv("Z_THRESHOLDS", "0.75,1.5")
+        config = load_config()
+        assert config.ma_periods == [12, 24, 48]
+        assert config.z_thresholds == [0.75, 1.5]
+
+    def test_invalid_grid_values_fail(self, monkeypatch):
+        _set_valid_env(monkeypatch)
+        monkeypatch.setenv("MA_PERIODS", "1,20")
+        with pytest.raises(ConfigError, match="MA_PERIODS"):
+            load_config()

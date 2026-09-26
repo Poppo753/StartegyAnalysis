@@ -37,6 +37,8 @@ class Config:
     x_values: List[float] = field(default_factory=list)
     y_values: List[int] = field(default_factory=list)
     z_values: List[float] = field(default_factory=list)
+    ma_periods: List[int] = field(default_factory=lambda: [10, 20])
+    z_thresholds: List[float] = field(default_factory=lambda: [1.0, 2.0])
 
     # Parametri trading
     max_hold_seconds: int = 300
@@ -197,6 +199,12 @@ def load_config() -> Config:
         except ValueError as e:
             raise ConfigError(f"Z_VALUES contiene valori non numerici: {z_str}") from e
 
+    try:
+        config.ma_periods = [int(v.strip()) for v in os.getenv("MA_PERIODS", "10,20").split(",") if v.strip()]
+        config.z_thresholds = [float(v.strip()) for v in os.getenv("Z_THRESHOLDS", "1,2").split(",") if v.strip()]
+    except ValueError as e:
+        raise ConfigError("MA_PERIODS e Z_THRESHOLDS devono essere elenchi numerici") from e
+
     # --- Parametri trading ---
     try:
         config.max_hold_seconds = int(os.getenv("MAX_HOLD_SECONDS", "300"))
@@ -318,6 +326,11 @@ def _validate_config(config: Config) -> None:
 
     if not config.z_values:
         raise ConfigError("Z_VALUES non può essere vuoto")
+
+    if not config.ma_periods or any(value < 2 for value in config.ma_periods):
+        raise ConfigError("MA_PERIODS deve contenere interi >= 2")
+    if not config.z_thresholds or any(value <= 0 for value in config.z_thresholds):
+        raise ConfigError("Z_THRESHOLDS deve contenere valori > 0")
 
     for x in config.x_values:
         if x <= 0:

@@ -17,6 +17,8 @@ export interface RunRecord {
   nTrials: number;
   jobs: number;
   validationMode: string;
+  dataset?: string;
+  overrides?: Record<string, string>;
   status: "queued" | "running" | "done" | "failed" | "cancelled" | "unknown";
   createdAt: string;
   startedAt?: string;
