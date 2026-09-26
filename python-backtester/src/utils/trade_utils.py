@@ -95,7 +95,7 @@ def calc_metrics(pnls: np.ndarray, capital: float) -> Dict[str, Any]:
     gl = float(np.sum(losing)) if nl > 0 else 0.0
     pf = gp / abs(gl) if gl < 0 else (999.0 if gp > 0 else 0.0)
     equity = capital + np.cumsum(pnls)
-    rmax = np.maximum.accumulate(equity)
+    rmax = np.maximum.accumulate(np.concatenate(([capital], equity)))[1:]
     dd_u = float(np.max(rmax - equity))
     dd_p = dd_u / capital * 100.0 if capital > 0 else 0.0
     expect = wr / 100.0 * avg_w + (1 - wr / 100.0) * avg_l

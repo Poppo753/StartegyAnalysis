@@ -43,7 +43,7 @@ describe("getPlatformPythonBin", () => {
     // This test only passes if the venv exists; skip otherwise
     const isWindows = process.platform === "win32";
     const binRel = isWindows ? ".venv/Scripts/python.exe" : ".venv/bin/python";
-    const binPath = path.resolve(process.cwd(), binRel);
+    const binPath = path.resolve(process.cwd(), "python-backtester", binRel);
     if (!fs.existsSync(binPath)) {
       console.log("Skipping getPlatformPythonBin test - venv not found");
       return;
@@ -262,5 +262,58 @@ describe("RunSpawner kill behavior", () => {
   test("kill returns false when no process running", () => {
     const result = spawner.kill("non-existent");
     expect(result).toBe(false);
+  });
+});
+
+describe("RunSpawner process management", () => {
+  let root: string;
+  let store: RunStore;
+  let spawner: RunSpawner;
+
+  const config = (runId: string, engine: string): import("./runSpawn").SpawnConfig => ({
+    runId, engine, symbol: runId, strategy: "momentum_drop", search: "grid",
+    nTrials: 1, jobs: 1, validationMode: "off", repoRoot: root,
+  });
+
+  beforeEach(() => {
+    root = makeTmpRoot();
+    fs.writeFileSync(path.join(root, "main.py"), "setTimeout(() => console.log('finished'), 200);\n");
+    store = createRunStore(root);
+    spawner = createRunSpawner(store, root, 1000, fakePythonBin);
+  });
+
+  afterEach(() => cleanup(root));
+
+  test("cancels the requested process while another run completes", async () => {
+    store.create(makeRecord({ id: "first" }));
+    store.create(makeRecord({ id: "second" }));
+    const first = spawner.spawn(config("first", "standard"));
+    const second = spawner.spawn(config("second", "standard"));
+    expect(spawner.kill("first")).toBe(true);
+    expect((await first).success).toBe(false);
+    expect((await second).success).toBe(true);
+    expect(store.load("first")?.status).toBe("cancelled");
+    expect(store.load("second")?.status).toBe("done");
+    expect(spawner.kill("first")).toBe(false);
+  });
+
+  test("starts the next GPU run when the lock is released", async () => {
+    store.create(makeRecord({ id: "gpu-first", engine: "gpu" }));
+    store.create(makeRecord({ id: "gpu-second", engine: "gpu" }));
+    const first = spawner.spawn(config("gpu-first", "gpu"));
+    const second = spawner.spawn(config("gpu-second", "gpu"));
+    expect(store.load("gpu-second")?.status).toBe("queued");
+    expect(spawner.getGpuQueued()).toEqual(["gpu-second"]);
+    expect((await first).success).toBe(true);
+    expect((await second).success).toBe(true);
+    expect(store.load("gpu-second")?.status).toBe("done");
+    expect(spawner.getGpuQueued()).toEqual([]);
+  });
+
+  test("a missing executable fails the run without crashing the process", async () => {
+    store.create(makeRecord({ id: "missing" }));
+    const result = await spawner.spawn(config("missing", "standard"), path.join(root, "does-not-exist"));
+    expect(result.success).toBe(false);
+    expect(store.load("missing")?.status).toBe("failed");
   });
 });

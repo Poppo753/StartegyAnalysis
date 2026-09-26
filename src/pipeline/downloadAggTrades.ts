@@ -38,9 +38,11 @@ export interface DownloadResult {
  * - `t >= startMs`: necessario nelle pagine paginate (`fromId` senza
  *   `startTime`): l'API restituisce da `fromId` in poi senza vincolo di start.
  * - `t < endMs`: confine di giornata (end esclusiva).
- * - `t <= windowEndMs`: confine di finestra da 1h. Ridondante SOLO per la
+ * - `t < windowEndMs`: confine esclusivo di finestra da 1h. Ridondante SOLO per la
  *   prima pagina (dove l'API applica già `endTime`), ma necessario per le
  *   pagine successive (`fromId` senza `endTime`), che possono sforare.
+ *   La prossima finestra riparte da windowEndMs: includerlo qui duplicherebbe
+ *   i trade esattamente sul confine.
  */
 export function isTradeInWindow(
   tradeTimeMs: number,
@@ -48,7 +50,7 @@ export function isTradeInWindow(
   endMs: number,
   windowEndMs: number
 ): boolean {
-  return tradeTimeMs >= startMs && tradeTimeMs < endMs && tradeTimeMs <= windowEndMs;
+  return tradeTimeMs >= startMs && tradeTimeMs < endMs && tradeTimeMs < windowEndMs;
 }
 
 export async function downloadAggTrades(

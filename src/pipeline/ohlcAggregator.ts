@@ -3,7 +3,8 @@ import readline from 'readline';
 import path from 'path';
 import { createReadStream } from 'fs';
 import { createGunzip } from 'zlib';
-import { pipeline } from 'stream/promises';
+import { finished } from 'stream/promises';
+import { once } from 'events';
 import { BinanceAggTrade, OhlcCandle } from '../binance/types';
 import { floorToSecond, timestampMsToIso } from '../utils/dateUtils';
 
@@ -107,9 +108,14 @@ export class OHLCAggregator {
    * Assumes trades are time-ordered (as written by the downloader).
    */
   async fromStream(inputPath: string, outputPath: string): Promise<number> {
+    this.currentBucket = null;
+    this.candleCount = 0;
+    this.lineCount = 0;
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     const writeStream = fs.createWriteStream(outputPath, { encoding: 'utf-8' });
-    writeStream.write('timestamp,open,high,low,close,volume,tradeCount\n');
+    const outputFinished = finished(writeStream);
+    // Keep the rejection observed while the input is still being consumed.
+    outputFinished.catch(() => {});
 
     const isGz = inputPath.endsWith('.gz');
     const readStream = createReadStream(inputPath);
@@ -125,21 +131,30 @@ export class OHLCAggregator {
 
     const rl = readline.createInterface({ input: input as unknown as NodeJS.ReadableStream, crlfDelay: Infinity });
 
-    for await (const line of rl) {
-      if (line.trim() === '') continue;
+    try {
+      await this.writeLine(writeStream, 'timestamp,open,high,low,close,volume,tradeCount\n');
+      for await (const line of rl) {
+        if (line.trim() === '') continue;
 
-      let trade: BinanceAggTrade;
-      try {
-        trade = JSON.parse(line);
-      } catch {
-        continue;
+        let trade: BinanceAggTrade;
+        try {
+          trade = JSON.parse(line);
+        } catch {
+          continue;
+        }
+
+        await this.processTrade(trade, writeStream);
       }
 
-      this.processTrade(trade, writeStream);
+      await this.flush(writeStream);
+      await outputFinished;
+      return this.candleCount;
+    } catch (error) {
+      readStream.destroy();
+      writeStream.destroy();
+      await outputFinished.catch(() => {});
+      throw error;
     }
-
-    this.flush(writeStream);
-    return this.candleCount;
   }
 
   /**
@@ -168,16 +183,23 @@ export class OHLCAggregator {
 
     for (const key of sortedKeys) {
       const bucketTrades = buckets.get(key)!;
-      const prices = bucketTrades.map((t) => OHLCAggregator.priceToNumber(t.p));
-      const quantities = bucketTrades.map((t) => OHLCAggregator.quantityToNumber(t.q));
+      let high = -Infinity;
+      let low = Infinity;
+      let volume = 0;
+      for (const trade of bucketTrades) {
+        const price = OHLCAggregator.priceToNumber(trade.p);
+        high = Math.max(high, price);
+        low = Math.min(low, price);
+        volume += OHLCAggregator.quantityToNumber(trade.q);
+      }
 
       candles.push({
         timestamp: timestampMsToIso(key),
-        open: parseFloat(prices[0].toFixed(8)),
-        high: parseFloat(Math.max(...prices).toFixed(8)),
-        low: parseFloat(Math.min(...prices).toFixed(8)),
-        close: parseFloat(prices[prices.length - 1].toFixed(8)),
-        volume: parseFloat(quantities.reduce((sum, q) => sum + q, 0).toFixed(8)),
+        open: parseFloat(OHLCAggregator.priceToNumber(bucketTrades[0].p).toFixed(8)),
+        high: parseFloat(high.toFixed(8)),
+        low: parseFloat(low.toFixed(8)),
+        close: parseFloat(OHLCAggregator.priceToNumber(bucketTrades[bucketTrades.length - 1].p).toFixed(8)),
+        volume: parseFloat(volume.toFixed(8)),
         tradeCount: bucketTrades.length,
       });
     }
@@ -188,7 +210,7 @@ export class OHLCAggregator {
   /**
    * Process a single trade and write candle to stream if needed.
    */
-  private processTrade(trade: BinanceAggTrade, writeStream: fs.WriteStream): void {
+  private async processTrade(trade: BinanceAggTrade, writeStream: fs.WriteStream): Promise<void> {
     const price = OHLCAggregator.priceToNumber(trade.p);
     const quantity = OHLCAggregator.quantityToNumber(trade.q);
     const timestampMs = OHLCAggregator.normalizeTimestamp(trade.T);
@@ -212,7 +234,7 @@ export class OHLCAggregator {
       this.bucketVolume += quantity;
       this.bucketTradeCount++;
     } else {
-      this.writeCandle(writeStream, this.currentBucket);
+      await this.writeCandle(writeStream, this.currentBucket);
       this.currentBucket = bucketKey;
       this.bucketOpen = price;
       this.bucketHigh = price;
@@ -228,16 +250,21 @@ export class OHLCAggregator {
     }
   }
 
-  private writeCandle(writeStream: fs.WriteStream, bucketMs: number): void {
+  private async writeLine(writeStream: fs.WriteStream, line: string): Promise<void> {
+    if (!writeStream.write(line)) {
+      await once(writeStream, 'drain');
+    }
+  }
+
+  private async writeCandle(writeStream: fs.WriteStream, bucketMs: number): Promise<void> {
     const line = `${timestampMsToIso(bucketMs)},${OHLCAggregator.fmt(this.bucketOpen)},${OHLCAggregator.fmt(this.bucketHigh)},${OHLCAggregator.fmt(this.bucketLow)},${OHLCAggregator.fmt(this.bucketClose)},${OHLCAggregator.fmt(this.bucketVolume)},${this.bucketTradeCount}\n`;
-    writeStream.write(line);
+    await this.writeLine(writeStream, line);
     this.candleCount++;
   }
 
-  private flush(writeStream: fs.WriteStream): void {
+  private async flush(writeStream: fs.WriteStream): Promise<void> {
     if (this.currentBucket !== null) {
-      this.writeCandle(writeStream, this.currentBucket);
-      this.candleCount++;
+      await this.writeCandle(writeStream, this.currentBucket);
     }
     writeStream.end();
   }

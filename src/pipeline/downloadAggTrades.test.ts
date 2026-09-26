@@ -13,7 +13,7 @@ describe('isTradeInWindow', () => {
 
   it('accetta trade dentro giornata e finestra', () => {
     expect(isTradeInWindow(startMs, startMs, endMs, windowEndMs)).toBe(true);
-    expect(isTradeInWindow(windowEndMs, startMs, endMs, windowEndMs)).toBe(true);
+    expect(isTradeInWindow(windowEndMs - 1, startMs, endMs, windowEndMs)).toBe(true);
     expect(isTradeInWindow(startMs + 1_000, startMs, endMs, windowEndMs)).toBe(true);
   });
 
@@ -22,6 +22,7 @@ describe('isTradeInWindow', () => {
   });
 
   it('scarta trade oltre windowEndMs (pagine fromId senza endTime)', () => {
+    expect(isTradeInWindow(windowEndMs, startMs, endMs, windowEndMs)).toBe(false);
     expect(isTradeInWindow(windowEndMs + 1, startMs, endMs, windowEndMs)).toBe(false);
   });
 

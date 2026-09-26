@@ -10,7 +10,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { spawn, SpawnOptions, ChildProcess } from "child_process";
+import { spawn, execFileSync, SpawnOptions, ChildProcess } from "child_process";
 import { RunStore, RunRecord } from "./runStore";
 
 export interface PythonBinInfo {
@@ -37,10 +37,10 @@ export interface SpawnResult {
   error?: string;
 }
 
-function getPlatformPythonBin(): PythonBinInfo {
+function getPlatformPythonBin(repoRoot: string = path.resolve(process.cwd(), "python-backtester")): PythonBinInfo {
   const isWindows = process.platform === "win32";
   const binRel = isWindows ? ".venv/Scripts/python.exe" : ".venv/bin/python";
-  const binPath = path.resolve(process.cwd(), binRel);
+  const binPath = path.resolve(repoRoot, binRel);
 
   if (!fs.existsSync(binPath)) {
     throw new Error(
@@ -52,8 +52,7 @@ function getPlatformPythonBin(): PythonBinInfo {
   // Verify it works by getting version
   let version = "unknown";
   try {
-    const { execSync } = require("child_process");
-    version = execSync(`"${binPath}" --version`, { encoding: "utf8", timeout: 5000 }).trim();
+    version = execFileSync(binPath, ["--version"], { encoding: "utf8", timeout: 5000 }).trim();
   } catch {
     // Version check failed but binary exists; proceed anyway
   }
@@ -96,15 +95,20 @@ export class RunSpawner {
   private pythonBin: PythonBinInfo;
   private repoRoot: string;
   private logRotationThreshold: number;
-  private activeProcess: ChildProcess | null = null;
-  private currentRunId: string | null = null;
-  private gpuQueued: string[] = [];
+  private activeProcesses = new Map<string, ChildProcess>();
+  private gpuQueued = new Map<string, {
+    config: SpawnConfig;
+    pythonBin?: string;
+    resolve: (result: SpawnResult) => void;
+  }>();
+  private gpuQueueTimer: NodeJS.Timeout | null = null;
+  private killTimers = new Map<string, () => void>();
 
   constructor(store: RunStore, repoRoot?: string, logRotationThreshold?: number, pythonBinOverride?: PythonBinInfo) {
     this.store = store;
     this.repoRoot = repoRoot ?? path.resolve(process.cwd(), "python-backtester");
     this.logRotationThreshold = logRotationThreshold ?? 10 * 1024 * 1024; // 10MB default
-    this.pythonBin = pythonBinOverride ?? getPlatformPythonBin();
+    this.pythonBin = pythonBinOverride ?? getPlatformPythonBin(this.repoRoot);
   }
 
   getPythonBin(): PythonBinInfo {
@@ -113,20 +117,52 @@ export class RunSpawner {
 
   async spawn(config: SpawnConfig, pythonBin?: string): Promise<SpawnResult> {
     const { runId, engine } = config;
-
-    // Handle GPU queue
-    if (engine === "gpu") {
-      if (!this.store.acquireGpuLock(runId)) {
-        // Re-queue: transition back to queued
-        this.store.transition(runId, "queued");
-        this.gpuQueued.push(runId);
-        return { success: false, error: "GPU busy, re-queued" };
-      }
+    if (this.activeProcesses.has(runId) || this.gpuQueued.has(runId)) {
+      return { success: false, error: "run already scheduled" };
     }
+    if (engine === "gpu" && !this.store.acquireGpuLock(runId)) {
+      return new Promise((resolve) => {
+        this.gpuQueued.set(runId, { config, pythonBin, resolve });
+        this.scheduleGpuQueueCheck();
+      });
+    }
+    return this.launch(config, pythonBin);
+  }
 
-    this.currentRunId = runId;
-    this.store.transition(runId, "running");
+  private drainGpuQueue(): void {
+    const next = this.gpuQueued.entries().next().value;
+    if (!next) {
+      if (this.gpuQueueTimer) clearInterval(this.gpuQueueTimer);
+      this.gpuQueueTimer = null;
+      return;
+    }
+    const [runId, queued] = next;
+    if (!this.store.acquireGpuLock(runId)) return;
+    this.gpuQueued.delete(runId);
+    if (this.gpuQueued.size === 0 && this.gpuQueueTimer) {
+      clearInterval(this.gpuQueueTimer);
+      this.gpuQueueTimer = null;
+    }
+    void this.launch(queued.config, queued.pythonBin).then(queued.resolve);
+  }
 
+  private scheduleGpuQueueCheck(): void {
+    if (this.gpuQueueTimer) return;
+    this.gpuQueueTimer = setInterval(() => this.drainGpuQueue(), 1000);
+    this.gpuQueueTimer.unref();
+  }
+
+  private async launch(config: SpawnConfig, pythonBin?: string): Promise<SpawnResult> {
+    const { runId, engine } = config;
+    try {
+      this.store.transition(runId, "running");
+    } catch (error) {
+      if (engine === "gpu") {
+        this.store.releaseGpuLock(runId);
+        this.drainGpuQueue();
+      }
+      return { success: false, error: String(error) };
+    }
     const binPath = pythonBin ?? this.pythonBin.path;
     const argv = buildArgv(config, binPath);
     const cwd = this.repoRoot;
@@ -139,97 +175,95 @@ export class RunSpawner {
     };
 
     return new Promise((resolve) => {
-      const child = spawn(binPath, argv, options);
-      this.activeProcess = child;
-
-      let killed = false;
-      let forceKilled = false;
-
-      const cleanup = () => {
-        this.activeProcess = null;
-        this.currentRunId = null;
-      };
-
-      const handleExit = (code: number | null, signal: NodeJS.Signals | null) => {
-        if (killed && !forceKilled) {
-          // Was cancelled via kill()
-          this.store.transition(runId, "cancelled");
-          const record = this.store.load(runId);
-          if (record) {
-            record.exitCode = code ?? (signal ? 128 + (signal as any) : 1);
-            this.store.save(record);
-          }
-          resolve({ success: false, exitCode: code ?? 1, error: "cancelled" });
-        } else if (code === 0) {
-          this.store.transition(runId, "done");
-          const record = this.store.load(runId);
-          if (record) {
-            record.exitCode = 0;
-            this.store.save(record);
-          }
-          resolve({ success: true, exitCode: 0 });
-        } else {
-          this.store.transition(runId, "failed");
-          const record = this.store.load(runId);
-          if (record) {
-            record.exitCode = code ?? 1;
-            this.store.save(record);
-          }
-          resolve({ success: false, exitCode: code ?? 1, error: `exited with code ${code}` });
-        }
-        cleanup();
-
-        // Process GPU queue
+      let child: ChildProcess;
+      try {
+        child = spawn(binPath, argv, options);
+      } catch (error) {
+        this.store.transition(runId, "failed");
         if (engine === "gpu") {
           this.store.releaseGpuLock(runId);
-          if (this.gpuQueued.length > 0) {
-            const next = this.gpuQueued.shift()!;
-            // The next run will be picked up by the caller re-trying
-          }
+          this.drainGpuQueue();
+        }
+        resolve({ success: false, error: String(error) });
+        return;
+      }
+      this.activeProcesses.set(runId, child);
+      let cancelled = false;
+      let processError: Error | null = null;
+      let forceTimer: NodeJS.Timeout | null = null;
+
+      const append = (chunk: Buffer): void => {
+        try {
+          this.store.appendLog(runId, chunk.toString("utf8"));
+          rotateLogIfNeeded(path.join(this.store["runsDir"], `${runId}.log`), this.logRotationThreshold);
+        } catch (error) {
+          processError = error instanceof Error ? error : new Error(String(error));
+          child.kill();
         }
       };
-
-      child.on("exit", handleExit);
-
-      child.stdout?.on("data", (chunk: Buffer) => {
-        this.store.appendLog(runId, chunk.toString("utf8"));
-        // Check rotation
-        const rotated = rotateLogIfNeeded(
-          path.join(this.store["runsDir"], `${runId}.log`),
-          this.logRotationThreshold
-        );
-        // Note: rotated flag is checked on readLog, not stored here
+      child.stdout?.on("data", append);
+      child.stderr?.on("data", append);
+      child.on("error", (error) => { processError = error; });
+      child.on("close", (code) => {
+        if (forceTimer) clearTimeout(forceTimer);
+        this.activeProcesses.delete(runId);
+        this.killTimers.delete(runId);
+        const exitCode = code ?? 1;
+        const status = cancelled ? "cancelled" : processError || code !== 0 ? "failed" : "done";
+        let error: string | undefined;
+        try {
+          const current = this.store.load(runId);
+          if (current && (current.status === "running" || current.status === "queued")) {
+            this.store.transition(runId, status);
+          }
+          const record = this.store.load(runId);
+          if (record) {
+            record.exitCode = exitCode;
+            this.store.save(record);
+          }
+        } catch (e) {
+          error = String(e);
+        } finally {
+          if (engine === "gpu") {
+            this.store.releaseGpuLock(runId);
+            this.drainGpuQueue();
+          }
+        }
+        resolve({
+          success: status === "done" && !error,
+          exitCode,
+          error: error ?? (cancelled ? "cancelled" : processError?.message ?? (code === 0 ? undefined : `exited with code ${code}`)),
+        });
       });
-
-      child.stderr?.on("data", (chunk: Buffer) => {
-        this.store.appendLog(runId, chunk.toString("utf8"));
-        const rotated = rotateLogIfNeeded(
-          path.join(this.store["runsDir"], `${runId}.log`),
-          this.logRotationThreshold
-        );
+      this.killTimers.set(runId, () => {
+        cancelled = true;
+        child.kill("SIGTERM");
+        forceTimer = setTimeout(() => {
+          if (this.activeProcesses.get(runId) === child) child.kill("SIGKILL");
+        }, 10000);
+        forceTimer.unref();
       });
-
-      // Store reference for kill()
-      this.activeProcess = child;
     });
   }
 
   kill(runId: string): boolean {
-    if (this.activeProcess && this.currentRunId === runId) {
-      this.activeProcess.kill("SIGTERM");
-      // Force kill after 10s
-      setTimeout(() => {
-        if (this.activeProcess && this.currentRunId === runId) {
-          this.activeProcess.kill("SIGKILL");
-        }
-      }, 10000);
+    const queued = this.gpuQueued.get(runId);
+    if (queued) {
+      this.gpuQueued.delete(runId);
+      queued.resolve({ success: false, error: "cancelled" });
+      if (this.gpuQueued.size === 0) this.drainGpuQueue();
+      return true;
+    }
+    const kill = this.killTimers.get(runId);
+    if (kill) {
+      kill();
       return true;
     }
     return false;
   }
 
   getGpuQueued(): string[] {
-    return [...this.gpuQueued];
+    return [...this.gpuQueued.keys()];
   }
 }
 

@@ -97,7 +97,9 @@ def calculate_fast_metrics(
         metrics["worst_trade"] = float(np.min(pnls))
 
     # --- Max Drawdown ---
-    metrics["max_drawdown"] = _max_drawdown(pnls, initial_capital)
+    metrics["max_drawdown"] = _max_drawdown(
+        pnl_percents if direction == 0 else pnls, initial_capital, direction == 0
+    )
 
     # --- Profit Factor ---
     metrics["profit_factor"] = _profit_factor(pnls, pnl_percents, direction)
@@ -125,7 +127,7 @@ def calculate_fast_metrics(
     return metrics
 
 
-def _max_drawdown(pnls: np.ndarray, initial_capital: float) -> float:
+def _max_drawdown(pnls: np.ndarray, initial_capital: float, signal_only: bool = False) -> float:
     """
     Calcola max drawdown sulla equity curve (PnL cumulativo).
 
@@ -135,12 +137,15 @@ def _max_drawdown(pnls: np.ndarray, initial_capital: float) -> float:
     if len(pnls) == 0:
         return 0.0
 
-    equity = initial_capital + np.cumsum(pnls)
-    running_max = np.maximum.accumulate(equity)
+    baseline = 0.0 if signal_only else initial_capital
+    equity = baseline + np.cumsum(pnls)
+    running_max = np.maximum.accumulate(np.concatenate(([baseline], equity)))[1:]
     drawdowns = running_max - equity
 
     max_dd = float(np.max(drawdowns))
 
+    if signal_only:
+        return max_dd
     if initial_capital > 0:
         return max_dd / initial_capital * 100.0
     return 0.0

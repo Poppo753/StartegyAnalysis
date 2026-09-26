@@ -59,18 +59,23 @@ function listFilesRecursive(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Basename-only resolution inside RESULTS_ROOT (traversal-safe). */
+function validSymbol(symbol: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(symbol);
+}
+
+/** Resolve a listed trades CSV inside the selected symbol directory. */
 function safeTradesPath(symbol: string, file: string): string | null {
-  const base = path.basename(file);
-  if (base !== file || !/^[A-Za-z0-9_.\-]+\.csv$/.test(base)) return null;
-  const symbolDir = path.resolve(RESULTS_ROOT, path.basename(symbol));
-  const full = path.resolve(symbolDir, base);
+  if (!validSymbol(symbol) || !file || !path.basename(file).startsWith("trades")) return null;
+  const symbolDir = path.resolve(RESULTS_ROOT, symbol);
+  const full = path.resolve(symbolDir, file);
+  const relative = path.relative(symbolDir, full);
+  if (relative.startsWith("..") || path.isAbsolute(relative) || path.extname(full) !== ".csv") return null;
   const all = listFilesRecursive(symbolDir);
   return all.includes(full) ? full : null;
 }
 
 function loadSummaries(symbol: string): { rows: DataRow[]; mock: boolean } {
-  const symbolDir = path.join(RESULTS_ROOT, path.basename(symbol));
+  const symbolDir = path.join(RESULTS_ROOT, symbol);
   const files = listFilesRecursive(symbolDir).filter((f) =>
     path.basename(f).startsWith("summary"),
   );
@@ -117,6 +122,13 @@ export function handleResultsRoutes(
   url: URL,
 ): boolean {
   const q = url.searchParams;
+  if (["/api/summaries", "/api/trades-files", "/api/equity", "/api/heatmap", "/api/report"].includes(url.pathname)) {
+    const symbol = q.get("symbol") || "DCRUSDT";
+    if (!validSymbol(symbol)) {
+      sendJson(res, 400, { error: "invalid symbol" });
+      return true;
+    }
+  }
 
   if (url.pathname === "/api/summaries") {
     const symbol = q.get("symbol") || "DCRUSDT";
@@ -137,7 +149,7 @@ export function handleResultsRoutes(
 
   if (url.pathname === "/api/trades-files") {
     const symbol = q.get("symbol") || "DCRUSDT";
-    const symbolDir = path.join(RESULTS_ROOT, path.basename(symbol));
+    const symbolDir = path.join(RESULTS_ROOT, symbol);
     const files = listFilesRecursive(symbolDir)
       .filter((f) => path.basename(f).startsWith("trades"))
       .map((f) => path.relative(symbolDir, f));
@@ -202,7 +214,7 @@ export function handleResultsRoutes(
     const top = sortRows(rows, "total_pnl", "desc")[0];
     let equity = null;
     if (top) {
-      const symbolDir = path.join(RESULTS_ROOT, path.basename(symbol));
+      const symbolDir = path.join(RESULTS_ROOT, symbol);
       const tradesFiles = listFilesRecursive(symbolDir).filter((f) =>
         path.basename(f).startsWith("trades"),
       );

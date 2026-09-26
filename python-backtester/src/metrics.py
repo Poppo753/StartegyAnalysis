@@ -165,7 +165,9 @@ def calculate_metrics(trades: List[Trade], params: BacktestParams, symbol: str) 
         result.worst_trade = float(np.min(pnls))
 
     # --- Max Drawdown ---
-    result.max_drawdown = _calculate_max_drawdown(pnls, params)
+    result.max_drawdown = _calculate_max_drawdown(
+        pnl_percents if params.direction == "signal-only" else pnls, params
+    )
 
     # --- Profit Factor ---
     result.profit_factor = _calculate_profit_factor(pnls, pnl_percents, params)
@@ -245,15 +247,11 @@ def _calculate_max_drawdown(pnls: np.ndarray, params: BacktestParams) -> float:
     if len(pnls) == 0:
         return 0.0
 
-    # Costruisci equity curve
-    if params.direction == "signal-only":
-        # Per signal-only usiamo i pnl_percent come proxy
-        equity = params.initial_capital + np.cumsum(pnls)
-    else:
-        equity = params.initial_capital + np.cumsum(pnls)
-
-    # Calcola running maximum
-    running_max = np.maximum.accumulate(equity)
+    # Signal-only usa movimenti percentuali: il drawdown e' in punti
+    # percentuali, senza scalare per un capitale fittizio.
+    baseline = 0.0 if params.direction == "signal-only" else params.initial_capital
+    equity = baseline + np.cumsum(pnls)
+    running_max = np.maximum.accumulate(np.concatenate(([baseline], equity)))[1:]
 
     # Drawdown ad ogni punto
     drawdowns = running_max - equity
@@ -262,6 +260,8 @@ def _calculate_max_drawdown(pnls: np.ndarray, params: BacktestParams) -> float:
     max_dd = float(np.max(drawdowns)) if len(drawdowns) > 0 else 0.0
 
     # Converti in percentuale rispetto al capitale iniziale
+    if params.direction == "signal-only":
+        return max_dd
     if params.initial_capital > 0:
         max_dd_percent = max_dd / params.initial_capital * 100.0
     else:

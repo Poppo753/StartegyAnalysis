@@ -86,6 +86,9 @@ export async function runPipeline(config: AppConfig, options: RunPipelineOptions
   }
 
   _log.info(`\nPipeline finished. Success: ${succeeded}, Failed: ${failed}`);
+  if (failed > 0) {
+    throw new Error(`Pipeline failed for ${failed} of ${config.symbols.length} symbol(s)`);
+  }
 }
 
 async function processSymbol(

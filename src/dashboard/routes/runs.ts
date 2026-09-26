@@ -187,11 +187,26 @@ function runLog(store: RunStore, id: string, fromLine: number): {
   lines: string[];
   eof: boolean;
   rotated: boolean;
+  nextLine: number;
+  truncated: boolean;
 } {
-  const raw = store.readLog(id, fromLine);
-  const lines =
-    raw.lines.length > LOG_MAX_LINES ? raw.lines.slice(raw.lines.length - LOG_MAX_LINES) : raw.lines;
-  return { totalLines: raw.totalLines, lines, eof: raw.eof, rotated: raw.rotated };
+  let start = Math.max(1, fromLine);
+  let raw = store.readLog(id, start);
+  const rotated = fromLine > raw.totalLines + 1;
+  if (rotated) {
+    start = 1;
+    raw = store.readLog(id, start);
+  }
+  const truncated = raw.lines.length > LOG_MAX_LINES;
+  const lines = raw.lines.slice(0, LOG_MAX_LINES);
+  return {
+    totalLines: raw.totalLines,
+    lines,
+    eof: !truncated && raw.eof,
+    rotated: raw.rotated || rotated,
+    nextLine: start + lines.length,
+    truncated,
+  };
 }
 
 function loadRun(res: http.ServerResponse, store: RunStore, id: string): RunRecord | null {

@@ -126,3 +126,9 @@ cd python-backtester
 ---
 
 > "Il software più utile è quello che risponde a una domanda che ti stava facendo da due ore."
+
+## Aggiornamento interfaccia (26 settembre 2026)
+
+La navigazione usa ora le etichette **Panoramica**, **Nuovo backtest**, **Esecuzioni**, **Risultati** e **Report**. Il form raggruppa impostazioni principali e parametri avanzati; le viste Risultati ed Esecuzioni espongono filtri, stati e azioni in pannelli dedicati. Il layout si adatta anche a schermi stretti e offre temi chiaro e scuro.
+
+Se le API di stato, configurazione o esecuzioni non rispondono, la vista mostra un errore esplicito invece di sostituire i dati con esempi. I risultati dimostrativi restituiti dal server quando mancano i CSV restano disponibili, ma sono etichettati come tali. Il log indica quando è stato ruotato o quando resta un blocco di righe da caricare.

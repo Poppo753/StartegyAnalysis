@@ -39,16 +39,18 @@ export async function mountNewRun(root) {
   if (root.dataset.init === "1") return refreshNewRun(root);
   root.dataset.init = "1";
   root.innerHTML = "";
-  root.appendChild(el("h2", null, "New run · data-driven form"));
-  root.appendChild(el("p", "note", "Fields are built from GET /api/config at runtime. A new CLI flag appears automatically."));
+  const header = el("div", "page-header");
+  const title = el("div");
+  title.append(el("p", "eyebrow", "Configurazione"), el("h2", null, "Nuovo backtest"), el("p", "page-subtitle", "Scegli mercato e strategia, regola i parametri e avvia una nuova analisi."));
+  const btn = el("button", null, "Ricarica opzioni");
+  btn.type = "button";
+  btn.addEventListener("click", () => refreshNewRun(root));
+  header.append(title, btn);
+  root.appendChild(header);
   const box = el("div", null, "loading…");
   box.id = "newrun-box";
   box.className = "loading";
   root.appendChild(box);
-  const btn = el("button", null, "Reload config");
-  btn.type = "button";
-  btn.addEventListener("click", () => refreshNewRun(root));
-  root.appendChild(btn);
   await refreshNewRun(root);
 }
 
@@ -58,16 +60,15 @@ async function refreshNewRun(root) {
   box.textContent = "loading…";
   box.className = "loading";
   let cfg;
-  let mocked = false;
   try {
     cfg = await apiGet("/api/config");
   } catch {
-    cfg = MOCK_CONFIG;
-    mocked = true;
+    box.className = "panel error";
+    box.textContent = "Impossibile caricare le opzioni. Verifica la connessione al server e riprova.";
+    return;
   }
   box.innerHTML = "";
   box.className = "";
-  if (mocked) box.appendChild(el("p", "note", "MOCK config — /api/config unreachable. Includes EXTRA flag “fictitious-extra-flag”."));
   box.appendChild(buildForm(cfg));
 }
 
@@ -75,11 +76,28 @@ export function buildForm(cfg) {
   const form = document.createElement("form");
   form.id = "newrun-form";
   form.noValidate = true;
+  form.className = "panel";
+  const basics = el("div", "form-section");
+  const basicsHeading = el("div", "form-section-title");
+  basicsHeading.append(el("h3", null, "01 / Impostazioni principali"), el("p", null, "Mercato, strategia e motore di esecuzione"));
+  basics.append(basicsHeading);
+  const basicsGrid = el("div", "form-grid");
+  basics.append(basicsGrid);
+  form.append(basics);
+  const extras = el("div", "form-section");
+  const extrasHeading = el("div", "form-section-title");
+  extrasHeading.append(el("h3", null, "02 / Parametri avanzati"), el("p", null, "Ottimizzazione e validazione della strategia"));
+  extras.append(extrasHeading);
+  const extrasGrid = el("div", "form-grid");
+  extras.append(extrasGrid);
+  form.append(extras);
+  const names = { symbol: "Simbolo", strategy: "Strategia", engine: "Motore", search: "Metodo di ricerca", "n-trials": "Numero di prove", jobs: "Processi paralleli", "validation-mode": "Tipo di validazione" };
+  const displayName = (name) => names[name] || name.replaceAll(/[-_]/g, " ").replace(/^./, c => c.toUpperCase());
 
   const addSelect = (name, labelText, options, def) => {
     const wrap = el("div", "field");
     const lab = document.createElement("label");
-    lab.textContent = labelText + " ";
+    lab.textContent = displayName(labelText);
     lab.htmlFor = "nr-" + name;
     const sel = document.createElement("select");
     sel.id = "nr-" + name;
@@ -94,7 +112,7 @@ export function buildForm(cfg) {
     lab.appendChild(sel);
     wrap.appendChild(lab);
     wrap.appendChild(el("span", "field-error", ""));
-    form.appendChild(wrap);
+    basicsGrid.appendChild(wrap);
     return sel;
   };
 
@@ -112,7 +130,7 @@ export function buildForm(cfg) {
     const wrap = el("div", "field");
     const lab = document.createElement("label");
     const fname = String(f.name ?? "flag");
-    lab.textContent = fname + " ";
+    lab.textContent = displayName(fname);
     lab.htmlFor = "nr-" + toFieldKey(fname);
     let input;
     if (f.type === "enum" && Array.isArray(f.values)) {
@@ -170,18 +188,22 @@ export function buildForm(cfg) {
     lab.appendChild(input);
     wrap.appendChild(lab);
     if (f.min !== undefined || f.max !== undefined) {
-      wrap.appendChild(el("span", "note", " range " + String(f.min ?? "-inf") + "…" + String(f.max ?? "+inf")));
+      wrap.appendChild(el("span", "note", "Intervallo: " + String(f.min ?? "−∞") + " – " + String(f.max ?? "+∞")));
     }
     wrap.appendChild(el("span", "field-error", ""));
-    form.appendChild(wrap);
+    extrasGrid.appendChild(wrap);
   });
 
   const err = el("p", "field-error", "");
   err.id = "nr-error";
-  form.appendChild(err);
-  const submit = el("button", null, "Start run");
+  err.setAttribute("role", "alert");
+  const footer = el("div", "form-footer");
+  const info = el("div");
+  info.append(el("p", null, "Controlla i parametri prima di avviare l'esecuzione."), err);
+  const submit = el("button", null, "Avvia backtest →");
   submit.type = "submit";
-  form.appendChild(submit);
+  footer.append(info, submit);
+  form.appendChild(footer);
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();

@@ -45,3 +45,14 @@ def test_direction_aware_symmetry():
     m_short = calculate_fast_metrics(trades, 2, direction=2, initial_capital=10000.0)
     assert m_long["avg_mae"] == pytest.approx(m_short["avg_mfe"])
     assert m_long["avg_mfe"] == pytest.approx(m_short["avg_mae"])
+
+
+def test_drawdown_includes_first_loss_and_signal_only_move():
+    trades = np.zeros((1, 10), dtype=np.float64)
+    trades[0, 2] = 100.0
+    trades[0, 4] = 100.0
+    trades[0, 5] = 100.0
+    trades[0, 6] = -10.0
+    trades[0, 7] = -2.0
+    assert calculate_fast_metrics(trades, 1, direction=1, initial_capital=1000.0)["max_drawdown"] == pytest.approx(1.0)
+    assert calculate_fast_metrics(trades, 1, direction=0, initial_capital=1000.0)["max_drawdown"] == pytest.approx(2.0)

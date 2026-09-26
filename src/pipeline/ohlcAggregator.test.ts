@@ -54,6 +54,17 @@ describe('OHLCAggregator.fromArray', () => {
     expect(candles[0].open).toBe(100);
     expect(candles[1].open).toBe(102);
   });
+
+  it('aggregates a large daily bucket without exceeding the argument limit', () => {
+    const trades = Array.from({ length: 125_000 }, (_, i) =>
+      makeTrade(String(100 + (i % 3)), '1', 1700000000000 + i, { a: i + 1 })
+    );
+    const candles = OHLCAggregator.fromArray(trades, 86400);
+    expect(candles).toHaveLength(1);
+    expect(candles[0].tradeCount).toBe(trades.length);
+    expect(candles[0].high).toBe(102);
+    expect(candles[0].volume).toBe(trades.length);
+  });
 });
 
 describe('OHLCAggregator.normalizeTimestamp', () => {
@@ -223,8 +234,9 @@ describe('F7-T03 · edge cases (time gaps, missing seconds, zero volumes, partia
     ].join('\n') + '\n';
     fs.writeFileSync(inputPath, lines, 'utf-8');
 
-    await new OHLCAggregator(60).fromStream(inputPath, outputPath);
-    const csv = await waitForFileContent(outputPath, 2, 10000);
+    const count = await new OHLCAggregator(60).fromStream(inputPath, outputPath);
+    expect(count).toBe(1);
+    const csv = fs.readFileSync(outputPath, 'utf-8');
     const rows = csv.trim().split('\n');
     expect(rows[0]).toBe('timestamp,open,high,low,close,volume,tradeCount');
     expect(rows).toHaveLength(2); // header + flushed partial bucket
@@ -236,6 +248,26 @@ describe('F7-T03 · edge cases (time gaps, missing seconds, zero volumes, partia
     expect(cols[6]).toBe('2');
     fs.rmSync(dir, { recursive: true, force: true });
   }, 30000);
+
+  it('returns only after a large streamed CSV is fully written', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ohlc-drain-'));
+    try {
+      const inputPath = path.join(dir, 'trades.jsonl');
+      const outputPath = path.join(dir, 'out.csv');
+      const base = 1700000000000;
+      const lines = Array.from({ length: 2000 }, (_, i) =>
+        JSON.stringify(makeTrade('100', '1', base + i * 1000, { a: i + 1 }))
+      );
+      fs.writeFileSync(inputPath, lines.join('\n') + '\n', 'utf-8');
+      const count = await new OHLCAggregator(1).fromStream(inputPath, outputPath);
+      const csv = fs.readFileSync(outputPath, 'utf-8').trim().split('\n');
+      expect(count).toBe(2000);
+      expect(csv).toHaveLength(2001);
+      expect(csv[2000].split(',')[6]).toBe('1');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('F7-T02 · pipeline integration (timeframes flag, filenames, idempotency)', () => {

@@ -35,3 +35,9 @@ def test_calc_metrics_basic():
     assert m["nl"] == 1
     assert m["wr"] == pytest.approx(2 / 3 * 100.0)
     assert m["total"] == pytest.approx(25.0)
+
+
+def test_calc_metrics_first_loss_counts_toward_drawdown():
+    m = calc_metrics(np.array([-10.0]), 1000.0)
+    assert m["dd_u"] == pytest.approx(10.0)
+    assert m["dd_p"] == pytest.approx(1.0)

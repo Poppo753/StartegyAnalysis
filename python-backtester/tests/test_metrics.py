@@ -107,9 +107,9 @@ class TestV3MetricsWiring:
         # downside costante [-1]*5 → std=0 → 0.0 per convenzione
         assert result.sortino_ratio == pytest.approx(0.0)
         assert result.expectancy == pytest.approx(-1.0)  # 0 - 1.0*1.0
-        # equity 999..995 → dd max 4 USDT = 0.4%; totale -5 USDT = -0.5%
-        assert result.max_drawdown == pytest.approx(0.4)
-        assert result.calmar_ratio == pytest.approx(-0.5 / 0.4)
+        # Include il capitale iniziale 1000: 1000 -> 995 = 0.5%.
+        assert result.max_drawdown == pytest.approx(0.5)
+        assert result.calmar_ratio == pytest.approx(-0.5 / 0.5)
 
     def test_mixed_known_downside(self):
         trades = [make_trade(pnl=v, pnl_percent=v)
@@ -130,3 +130,10 @@ class TestV3MetricsWiring:
         result = calculate_metrics(trades, params, "TEST")
         assert result.sortino_ratio == pytest.approx(0.5 * SQRT_252)
         assert result.expectancy == pytest.approx(0.5)  # 0.5*3.0-0.5*2.0
+
+    def test_signal_only_drawdown_uses_percent_moves_and_initial_capital(self):
+        params = _long_params()
+        params.direction = "signal-only"
+        trades = [make_trade(pnl=0.0, pnl_percent=-2.0)]
+        result = calculate_metrics(trades, params, "TEST")
+        assert result.max_drawdown == pytest.approx(2.0)

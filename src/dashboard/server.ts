@@ -34,6 +34,11 @@ function findRepoRoot(start: string): string {
 const REPO_ROOT = findRepoRoot(__dirname);
 const PUBLIC_DIR = path.join(REPO_ROOT, "src", "dashboard", "public");
 
+function isInside(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -60,8 +65,9 @@ const server = http.createServer((req, res) => {
 
     // Static files from src/dashboard/public ("/" -> index.html).
     const rel = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
-    const full = path.resolve(PUBLIC_DIR, path.normalize(rel));
-    if (!full.startsWith(path.resolve(PUBLIC_DIR)) || !fs.existsSync(full) || fs.statSync(full).isDirectory()) {
+    const full = path.resolve(PUBLIC_DIR, rel);
+    if (!isInside(PUBLIC_DIR, full) || !fs.existsSync(full) || fs.statSync(full).isDirectory() ||
+        !isInside(PUBLIC_DIR, fs.realpathSync(full))) {
       send(res, 404, "not found", "text/plain; charset=utf-8");
       return;
     }

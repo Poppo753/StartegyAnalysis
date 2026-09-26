@@ -62,14 +62,13 @@ export class RunStore {
 
   acquireGpuLock(runId: string): boolean {
     const lockPath = this.lockFile();
-    if (fs.existsSync(lockPath)) {
-      const existing = fs.readFileSync(lockPath, "utf8").trim();
-      if (existing && existing !== runId) {
-        return false;
-      }
+    try {
+      fs.writeFileSync(lockPath, runId, { encoding: "utf8", flag: "wx" });
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    fs.writeFileSync(lockPath, runId, "utf8");
-    return true;
+    return fs.readFileSync(lockPath, "utf8").trim() === runId;
   }
 
   releaseGpuLock(runId: string): void {

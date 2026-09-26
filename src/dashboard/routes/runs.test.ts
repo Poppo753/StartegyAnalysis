@@ -373,14 +373,16 @@ describe("routes/runs — GET /api/runs/:id and /log", () => {
     expect(r.body.logPath).toBeUndefined();
   });
 
-  test("log returns the frozen shape {totalLines,lines,eof,rotated}", async () => {
+  test("log returns the lines and a cursor for the next request", async () => {
     const r = await call("GET", "/api/runs/run-1/log?fromLine=1", deps);
     expect(r.code).toBe(200);
-    expect(Object.keys(r.body).sort()).toEqual(["eof", "lines", "rotated", "totalLines"]);
+    expect(Object.keys(r.body).sort()).toEqual(["eof", "lines", "nextLine", "rotated", "totalLines", "truncated"]);
     expect(r.body.totalLines).toBe(3);
     expect(r.body.lines).toEqual(["line 1", "line 2", "line 3"]);
     expect(r.body.eof).toBe(true);
     expect(r.body.rotated).toBe(false);
+    expect(r.body.nextLine).toBe(4);
+    expect(r.body.truncated).toBe(false);
   });
 
   test("log offset is line-based", async () => {
@@ -395,10 +397,34 @@ describe("routes/runs — GET /api/runs/:id and /log", () => {
     expect(r.body.lines).toEqual(["line 1", "line 2", "line 3"]);
   });
 
+  test("a capped log response exposes a cursor and does not skip lines", async () => {
+    store.appendLog("run-1", Array.from({ length: 2005 }, (_, i) => `extra ${i}\n`).join(""));
+    const first = await call("GET", "/api/runs/run-1/log?fromLine=0", deps);
+    expect(first.body.lines).toHaveLength(2000);
+    expect(first.body.lines[0]).toBe("line 1");
+    expect(first.body.truncated).toBe(true);
+    expect(first.body.eof).toBe(false);
+    expect(first.body.nextLine).toBe(2001);
+    const second = await call("GET", `/api/runs/run-1/log?fromLine=${first.body.nextLine}`, deps);
+    expect(second.body.lines).toHaveLength(8);
+    expect(second.body.lines[0]).toBe("extra 1997");
+    expect(second.body.truncated).toBe(false);
+    expect(second.body.eof).toBe(true);
+    expect(second.body.nextLine).toBe(2009);
+  });
+
+  test("detects a shorter rotated log and restarts its cursor", async () => {
+    fs.writeFileSync(store.load("run-1")!.logPath, "new line\n");
+    const r = await call("GET", "/api/runs/run-1/log?fromLine=50", deps);
+    expect(r.body.lines).toEqual(["new line"]);
+    expect(r.body.rotated).toBe(true);
+    expect(r.body.nextLine).toBe(2);
+  });
+
   test("log of an empty run is eof with zero lines", async () => {
     store.create(makeRecord({ id: "run-empty" }));
     const r = await call("GET", "/api/runs/run-empty/log", deps);
-    expect(r.body).toEqual({ totalLines: 0, lines: [], eof: true, rotated: false });
+    expect(r.body).toEqual({ totalLines: 0, lines: [], eof: true, rotated: false, nextLine: 1, truncated: false });
   });
 
   test("404 unknown run id on detail and log", async () => {

@@ -1,25 +1,27 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="it" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Trading dashboard · unified UI (U2)</title>
+<title>Trading Lab · Dashboard</title>
 <link rel="stylesheet" href="css/theme.css">
 </head>
 <body>
 <div class="layout">
   <aside class="sidebar">
-    <div class="brand">Trading dashboard<small>unified UI · U2 (vanilla, no deps)</small></div>
-    <nav aria-label="Main">
-      <a href="#/home" data-nav="home">Home</a>
-      <a href="#/new" data-nav="newRun">New Run</a>
-      <a href="#/runs" data-nav="runs">Runs</a>
-      <a href="#/results" data-nav="results">Results</a>
-      <a href="#/report" data-nav="report">Report</a>
+    <a class="brand" href="#/home" aria-label="Trading Lab, panoramica"><span class="brand-mark" aria-hidden="true"><svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 3 8-9"/><path d="M16 6h4v4"/></svg></span><span><span class="brand-name">Trading Lab</span><small>Backtest workspace</small></span></a>
+    <div class="nav-label">Workspace</div>
+    <nav aria-label="Navigazione principale">
+      <a href="#/home" data-nav="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Panoramica</a>
+      <a href="#/new" data-nav="newRun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8m-4-4h8"/></svg>Nuovo backtest</a>
+      <a href="#/runs" data-nav="runs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Esecuzioni</a>
+      <a href="#/results" data-nav="results"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V4m0 16h16M8 16v-5m5 5V7m5 9v-9"/></svg>Risultati</a>
+      <a href="#/report" data-nav="report"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h4M10 12h5m-5 4h5"/></svg>Report</a>
     </nav>
-    <button id="themeToggle" type="button" title="toggle dark/light">theme: dark</button>
+    <div class="sidebar-bottom"><p><strong>Ambiente locale</strong><br>Analisi e monitoraggio dei backtest</p><button class="theme-toggle" id="themeToggle" type="button" aria-label="Cambia tema">Tema <span id="themeName">Scuro</span></button></div>
   </aside>
   <main>
+    <div class="topbar"><div class="topbar-left"><span>Workspace</span><span class="topbar-separator">/</span><strong id="topbarCurrent">Panoramica</strong></div><div class="topbar-tag">Dashboard locale</div></div>
     <div id="toasts" aria-live="polite"></div>
     <section class="view" id="view-home" data-panel="home"></section>
     <section class="view" id="view-newRun" data-panel="newRun" hidden></section>
@@ -63,14 +65,17 @@ export async function show(view) {
   Object.entries(panels).forEach(([k, sec]) => { sec.hidden = k !== view; });
   document.querySelectorAll("[data-nav]").forEach((a) => {
     a.classList.toggle("active", a.getAttribute("data-nav") === view);
+    if (a.getAttribute("data-nav") === view) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
   });
+  document.getElementById("topbarCurrent").textContent = ({home:"Panoramica",newRun:"Nuovo backtest",runs:"Esecuzioni",results:"Risultati",report:"Report"})[view];
   try {
     await mounts[view](panels[view]);
   } catch (e) {
     panels[view].innerHTML = "";
     const p = document.createElement("p");
     p.className = "error";
-    p.textContent = "failed to load view " + view + ": " + (e && e.message ? e.message : String(e));
+    p.textContent = "Impossibile caricare questa sezione: " + (e && e.message ? e.message : String(e));
     panels[view].appendChild(p);
   }
 }
@@ -89,14 +94,14 @@ function initTheme() {
   }
   document.documentElement.setAttribute("data-theme", t);
   const b = document.getElementById("themeToggle");
-  b.textContent = "theme: " + t;
+  document.getElementById("themeName").textContent = t === "light" ? "Chiaro" : "Scuro";
 }
 document.getElementById("themeToggle").addEventListener("click", () => {
   const cur = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
   const next = cur === "light" ? "dark" : "light";
   document.documentElement.setAttribute("data-theme", next);
   try { window.localStorage.setItem(KEY, next); } catch { /* private mode */ }
-  document.getElementById("themeToggle").textContent = "theme: " + next;
+  document.getElementById("themeName").textContent = next === "light" ? "Chiaro" : "Scuro";
 });
 initTheme();
 show(route());
