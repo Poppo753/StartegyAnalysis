@@ -253,40 +253,40 @@ Lane D (UI, Fase 8): scheletro avviabile dopo F1+F2 (formati risultati + study O
 
 **Obiettivo**: Purged K-Fold + CPCV + PBO/semaforo + DSR + Walk-Forward + `--validation-mode`. Prerequisiti: F1; F2 raccomandato. **Include il punto decisionale differito D-1.**
 
-- [ ] **F3-V01 · Prerequisiti DSR: Sharpe in `metrics.py` + `scipy` (CHG-006)**
+- [x] **F3-V01 · Prerequisiti DSR: Sharpe in `metrics.py` + `scipy` (CHG-006)**
   File: `requirements.txt` (+`scipy` pinnato), `src/strategy.py` (AGGIUNGERE `sharpe_ratio: float = 0.0` a `BacktestResult` — verificato: il campo esiste solo nello sketch v3 §5.3, NON nel codice reale), `src/metrics.py` (`sharpe_ratio(values, risk_free=0.0)` annualizzato, stessa convenzione signal-only di F1-M01), cablaggio in `calculate_metrics`.
   DoD: Sharpe verificato a mano su serie sintetica (mean/std noti, annualizzazione √252); `tests/test_metrics.py` esteso, verde.
   Dipendenze: F1 (lock `strategy.py`+`metrics.py` con F1-M01 già chiusa). Stima: 0.5gg. Lane: A.
 
-- [ ] **F3-V02 · `PurgedKFold` in `src/validation/cross_validator.py` (nuovo package)**
+- [x] **F3-V02 · `PurgedKFold` in `src/validation/cross_validator.py` (nuovo package)**
   Operazione: split temporali K=5, purging osservazioni con label che si estende nel test, embargo 1–5% (parametro); API `split(X, y, horizon) → (train_idx, test_idx)`.
   DoD: test sintetico — nessuna osservazione del train ha label che tocca il test (controllo esaustivo sugli indici); embargo gap verificato.
   Dipendenze: F1. Stima: 1.5gg. Lane: A.
 
-- [ ] **F3-V03 · `CombinatorialPurgedCV` + `calculate_pbo` + `evaluate_pbo` (CHG-005)**
+- [x] **F3-V03 · `CombinatorialPurgedCV` + `calculate_pbo` + `evaluate_pbo` (CHG-005)**
   File: `src/validation/cross_validator.py` (estendere).
   Operazione: generazione percorsi C(N−1,K−1) **con cap pratico** (vedi D-1: enumerazione completa solo sotto soglia, altrimenti campionamento stratificato con seed); `calculate_pbo = n_negativi/n_totali`; `evaluate_pbo` con semaforo v3 (<10/10–50/>50) e disclaimer in docstring (soglie empiriche).
   DoD: **verifica critica v3**: strategia random (segnali casuali, seed multipli) → PBO > 50%; strategia con edge sintetico iniettato → PBO < 50%. Se fallisce, bug nel calcolo — non procedere.
   Dipendenze: F3-V02. Stima: 1.5gg. Lane: A.
 
-- [ ] **F3-V04 · Semaforo PBO nel protocollo (§6.2 step 5 già allineato in v3)**
+- [x] **F3-V04 · Semaforo PBO nel protocollo (§6.2 step 5 già allineato in v3)**
   Operazione: wiring `evaluate_pbo` nel `AntiOverfittingProtocol` (§6.2): esiti `SOLID → accetta`, `POTENTIALLY_VALID → walk-forward+holdout obbligatori`, `OVERFITTED → rigetta`; loggare sempre N_trials accanto al PBO (trabocchetto v3).
   DoD: mapping deterministico verificato (9.9→SOLID, 10.1→POTENTIALLY_VALID, 49.9→POTENTIALLY_VALID, 50.1→OVERFITTED); N_trials sempre presente nel log accanto al PBO; nota operativa nel report: valori entro ±2pp dai confini si trattano come fascia gialla a prescindere (confini morbidi per l'operatore, deterministici per il codice).
   Dipendenze: F3-V03. Stima: 0.5gg. Lane: A.
 
-- [ ] **F3-V05 · DSR operativo (CHG-004, solo ora che F3-V01 esiste)**
+- [x] **F3-V05 · DSR operativo (CHG-004, solo ora che F3-V01 esiste)**
   File: `src/validation/dsr.py` (nuovo, piccolo).
   Operazione: `calculate_dsr(sharpe, pbo)` = approssimazione `SR×(1−2×PBO)` come default operativo + `calculate_dsr_exact(sharpe, years)` = `φ/Φ` con `scipy.stats.norm` (documentare quando usare quale: operativa sempre, esatta per report finale con T in anni); regola `DSR < 0 → rigetta` nel protocollo.
   DoD: DSR negativo per strategia random ad alto PBO; DSR ≈ SR per PBO ≈ 0; test con valori noti di φ/Φ.
   Dipendenze: F3-V01, F3-V03. Stima: 0.5gg. Lane: A.
 
-- [ ] **F3-V06 · Walk-Forward con purging (no t-test/Shapiro — esclusione v3)**
+- [x] **F3-V06 · Walk-Forward con purging (no t-test/Shapiro — esclusione v3)**
   File: `src/validation/walk_forward.py` (nuovo).
   Operazione: finestre train(6m)/test(1m)/embargo(0.5m) parametrizzabili; per finestra: BO-opzionale sul train, backtest OOS sul test; output: PnL per periodo + profitability-rate + DSR + PBO (criteri v3, NON test parametrici: assunzione i.i.d. violata da finestre sovrapposte).
   DoD: run su 12+ mesi di dati → report per-periodo; strategia piatta → profitability ≈ 50% (sanity).
   Dipendenze: F3-V03, F2 (per BO-per-finestra; fallback: parametri fissi). Stima: 1.5gg. Lane: A.
 
-- [ ] **F3-V07 · Flag `--validation-mode {off,purged,cpcv,walkforward}` in `main.py` + holdout finale**
+- [x] **F3-V07 · Flag `--validation-mode {off,purged,cpcv,walkforward}` in `main.py` + holdout finale**
   Operazione: default `off` (comportamento invariato); holdout = ultimi 6 mesi MAI toccati da ricerca/validazione, usati una sola volta a fine protocollo; documentare che riusare l'holdout lo invalida.
   DoD: `--validation-mode off` ≡ output pre-Fase-3; `cpcv` produce PBO+DSR; holdout usato 2 volte → warning esplicito nel log.
   Dipendenze: F3-V02…F3-V06. Stima: 0.75gg. Lane: A (lock `main.py`).

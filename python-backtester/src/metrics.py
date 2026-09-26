@@ -58,6 +58,39 @@ def calmar_ratio(annual_return: float, max_drawdown: float) -> float:
     return float(annual_return / max_drawdown)
 
 
+def sharpe_ratio(values: np.ndarray, risk_free: float = 0.0) -> float:
+    """
+    Sharpe Ratio annualizzato (F3-V01, CHG-006, prerequisito DSR).
+
+    Sharpe = mean(values - risk_free) / std(values - risk_free) * sqrt(252)
+    con std = deviazione standard popolazione (np.std, ddof=0), coerente
+    con sortino_ratio sopra.
+
+    Convenzione signal-only (stessa di F1-M01 / sortino): il chiamante
+    (calculate_metrics) passa pnl_percent se direction == "signal-only",
+    altrimenti pnl in USDT. Questa funzione non conosce la direction.
+
+    Edge cases (stesse convenzioni di sortino):
+    - serie vuota → 0.0
+    - std == 0 (serie costante) o non-finita → 0.0
+    - media non-finita → 0.0
+    """
+    arr = np.asarray(values, dtype=float).ravel()
+    if arr.size == 0:
+        return 0.0
+    rf = float(risk_free)
+    if not np.isfinite(rf):
+        return 0.0
+    excess = arr - rf
+    std = float(np.std(excess))
+    if std == 0.0 or not np.isfinite(std):
+        return 0.0
+    mean_excess = float(np.mean(excess))
+    if not np.isfinite(mean_excess):
+        return 0.0
+    return float(mean_excess / std * np.sqrt(252.0))
+
+
 def expectancy(win_rate: float, avg_win: float, avg_loss: float) -> float:
     """
     Expectancy: profitto atteso del singolo trade medio (v3 §5.3, CHG-001).
@@ -148,6 +181,7 @@ def calculate_metrics(trades: List[Trade], params: BacktestParams, symbol: str) 
         values = pnls
 
     result.sortino_ratio = sortino_ratio(values, 0.0)
+    result.sharpe_ratio = sharpe_ratio(values, 0.0)
 
     positives = values[values > 0]
     negatives = values[values < 0]

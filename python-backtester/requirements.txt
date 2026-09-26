@@ -3,5 +3,6 @@ numpy
 python-dotenv
 numba
 optuna==5.0.0
+scipy==1.15.3
 # Test suite spedita con il repo (tests/): necessario per `python -m pytest tests/`
 pytest

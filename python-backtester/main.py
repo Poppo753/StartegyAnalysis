@@ -42,6 +42,7 @@ from src.utils import (
 )
 
 import pandas as pd
+import numpy as np
 from typing import List, Optional
 
 # Default Fase 2 (usati quando né CLI né .env li definiscono).
@@ -49,6 +50,21 @@ DEFAULT_SEARCH = "grid"
 DEFAULT_N_TRIALS = 50
 DEFAULT_JOBS = 1
 DEFAULT_STUDY_DB = "optimization_study_optuna.db"
+
+# Default Fase 3 (F3-V07): validazione disattivata = comportamento pre-Fase-3.
+DEFAULT_VALIDATION_MODE = "off"
+VALIDATION_MODES = ("off", "purged", "cpcv", "walkforward")
+HOLDOUT_MONTHS = 6
+AVG_MONTH_DAYS = 365.25 / 12.0  # ≈30.44 (stessa convenzione di walk_forward)
+
+# Chiavi holdout gia` valutate nel processo: riuso = warning esplicito
+# (il riuso invalida l'holdout, checklist F3-V07).
+_HOLDOUT_USED_KEYS = set()
+
+# Ultimi risultati per (symbol, strategy) — popolato dagli engine, letto
+# dal proxy CPCV in mode cpcv (F3-V07). Assegnazione di soli riferimenti:
+# comportamento off invariato.
+_LAST_RESULTS: dict = {}
 
 
 def parse_args(argv: Optional[List[str]] = None):
@@ -70,14 +86,13 @@ def parse_args(argv: Optional[List[str]] = None):
 
     parser = argparse.ArgumentParser(
         description=(
-            "Python Backtester (Fase 2: grid + Optuna TPE). "
+            "Python Backtester (Fase 2: grid + Optuna TPE; Fase 3: validazione). "
             "Precedenza valori: CLI > .env > default."
         ),
         epilog=(
             "Env supportati: SEARCH_METHOD, N_TRIALS, OPTUNA_JOBS, "
-            "OPTUNA_STUDY_DB, STRATEGIES (via config). "
-            "Estendibile: F3 aggiungerà --validation-mode, "
-            "F4 --llm-assist qui."
+            "OPTUNA_STUDY_DB, STRATEGIES (via config), VALIDATION_MODE. "
+            "Estendibile: F4 aggiungerà --llm-assist qui."
         ),
     )
     parser.add_argument(
@@ -131,6 +146,19 @@ def parse_args(argv: Optional[List[str]] = None):
             "default optimization_study_optuna.db."
         ),
     )
+    parser.add_argument(
+        "--validation-mode",
+        dest="validation_mode",
+        choices=list(VALIDATION_MODES),
+        default=None,
+        help=(
+            "Validazione Fase 3 (default: off = comportamento pre-Fase-3). "
+            "Precedenza: CLI > .env VALIDATION_MODE > default off. "
+            "off: nessun split, flusso invariato. purged/cpcv/walkforward: "
+            "holdout = ultimi 6 mesi MAI toccati da ricerca/validazione, "
+            "usati una sola volta a fine protocollo (riuso = warning)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -165,6 +193,154 @@ def _resolve_study_db(args) -> str:
         return str(args.study_db)
     env = os.getenv("OPTUNA_STUDY_DB", "").strip()
     return env if env else DEFAULT_STUDY_DB
+
+
+def _resolve_validation_mode(args) -> str:
+    """Risolvi --validation-mode con precedenza CLI > .env > default off."""
+    cli = (args.validation_mode or "").strip().lower() if args.validation_mode else ""
+    if cli:
+        return cli
+    env = os.getenv("VALIDATION_MODE", "").strip().lower()
+    if env:
+        if env not in VALIDATION_MODES:
+            print(f"❌ ERRORE configurazione: VALIDATION_MODE={env!r} non valido "
+                  f"({ '|'.join(VALIDATION_MODES)})")
+            sys.exit(1)
+        return env
+    return DEFAULT_VALIDATION_MODE
+
+
+def split_holdout(df: pd.DataFrame, months: int = HOLDOUT_MONTHS):
+    """Separa l'holdout (ultimi `months` mesi) dal working set (F3-V07).
+
+    L'holdout non deve MAI essere toccato da ricerca/validazione: i motori
+    e i report ricevono solo df_work; df_hold va a evaluate_holdout_once
+    una sola volta a fine protocollo. Se lo span e` < months o manca la
+    colonna datetime, restituisce (df, df vuota) e il chiamante procede
+    senza holdout (nota nel log).
+    """
+    if "datetime" not in df.columns or len(df) == 0:
+        return df, df.iloc[0:0].copy()
+    dts = pd.to_datetime(df["datetime"])
+    cutoff = dts.max() - pd.Timedelta(days=float(months) * AVG_MONTH_DAYS)
+    df_work = df[dts < cutoff].reset_index(drop=True)
+    df_hold = df[dts >= cutoff].reset_index(drop=True)
+    if len(df_work) == 0 or len(df_hold) == 0:
+        return df, df.iloc[0:0].copy()
+    return df_work, df_hold
+
+
+def select_engine_df(df: pd.DataFrame, validation_mode: str) -> pd.DataFrame:
+    """Df per motori/validazione: con mode off e` lo stesso oggetto (identita`
+    pre-Fase-3); altrimenti il working set senza holdout."""
+    if validation_mode == "off":
+        return df
+    df_work, _ = split_holdout(df)
+    if len(df_work) == len(df):
+        return df  # fallback documentato: span < 6 mesi, niente holdout
+    return df_work
+
+
+def run_purged_report(df_work: pd.DataFrame) -> dict:
+    """Report strutturale PurgedKFold sul working set (F3-V07, mode purged)."""
+    from src.validation.cross_validator import PurgedKFold
+
+    kf = PurgedKFold(n_splits=5, embargo_pct=0.01)
+    info = []
+    for i, (train_idx, test_idx) in enumerate(kf.split(df_work, horizon=1)):
+        info.append({"split": i, "n_train": len(train_idx), "n_test": len(test_idx)})
+        print(f"  🧪 Purged split {i + 1}/5: train={len(train_idx):,} test={len(test_idx):,}")
+    return {"mode": "purged", "splits": info}
+
+
+def run_cpcv_trade_proxy(results, n_trials: int) -> dict:
+    """PBO+DSR proxy a livello trade sul top-1 risultato (F3-V07, mode cpcv).
+
+    Proxy documentata: i trade del top-1 (ordinati per exit) sono partizionati
+    in N=6 gruppi contigui; ogni split CPCV valuta l'OOS come somma dei suoi
+    gruppi di test; PBO = frazione split negativi; DSR operativo da sharpe
+    dei gruppi + PBO; gate via apply_pbo_gate (N_trials = n. risultati).
+    Per CPCV a livello barre usare CombinatorialPurgedCV + split_oos_pnl.
+    """
+    from src.strategy import Trade  # noqa: F401 (documenta il tipo trattato)
+    from src.metrics import sharpe_ratio
+    from src.validation.cross_validator import CombinatorialPurgedCV, calculate_pbo
+    from src.validation.dsr import calculate_dsr
+    from src.validation.protocol import apply_pbo_gate
+
+    if not results:
+        print("  🧪 CPCV: nessun risultato da validare.")
+        return {"mode": "cpcv", "pbo": None, "dsr": None}
+    best = max(results, key=lambda r: (r.total_pnl_percent, r.total_pnl))
+    trades = sorted(best.trades, key=lambda t: (t.exit_time, t.entry_time))
+    n = len(trades)
+    N = 6
+    if n < N:
+        print(f"  🧪 CPCV: trade insufficienti ({n}) per il proxy a 6 gruppi.")
+        return {"mode": "cpcv", "pbo": None, "dsr": None}
+    per_trade = np.array(
+        [t.pnl_percent if best.params.direction == "signal-only" else t.pnl
+         for t in trades], dtype=float,
+    )
+    bounds = [(i * n) // N for i in range(N + 1)]
+    group_pnl = np.array(
+        [float(np.sum(per_trade[bounds[g]:bounds[g + 1]])) for g in range(N)]
+    )
+    cpcv = CombinatorialPurgedCV(n_partitions=N, n_test_groups=2)
+    split_pnls = []
+    for combo in cpcv.test_group_combos():
+        split_pnls.append(float(np.sum([group_pnl[g] for g in combo])))
+    split_pnls = np.array(split_pnls)
+    pbo = calculate_pbo(split_pnls)
+    sh = sharpe_ratio(group_pnl, 0.0)
+    dsr = calculate_dsr(sh, pbo)
+    gate = apply_pbo_gate(pbo, n_trials=int(n_trials), dsr=dsr)
+    print(f"  🧪 CPCV trade-proxy: splits={len(split_pnls)} "
+          f"PBO={gate['pbo_percent']:.2f}% DSR={dsr:.4f} "
+          f"decision={gate['decision']} (N_trials={n_trials})")
+    return {"mode": "cpcv", "pbo": pbo, "pbo_percent": gate["pbo_percent"],
+            "sharpe_groups": sh, "dsr": dsr, "gate": gate}
+
+
+def run_walkforward_baseline(df_work: pd.DataFrame) -> dict:
+    """Walk-forward baseline buy-hold sul working set (F3-V07, mode walkforward)."""
+    from src.validation.walk_forward import WalkForwardValidator
+
+    wf = WalkForwardValidator()
+    report = wf.run(
+        df_work,
+        evaluate_fn=lambda t: float(t["close"].pct_change().fillna(0).sum() * 100.0),
+    )
+    print(f"  🧪 Walk-forward: periodi={report['n_periods']} "
+          f"profitability={report['profitability_rate'] * 100:.1f}% "
+          f"PBO={report['pbo_percent']:.2f}% DSR={report['dsr']:.4f}")
+    return {"mode": "walkforward", **report}
+
+
+def evaluate_holdout_once(df_hold: pd.DataFrame, key: str) -> dict:
+    """Valuta l'holdout ESATTAMENTE una volta (F3-V07).
+
+    Riusare la stessa chiave (stesso holdout) stampa un WARNING esplicito:
+    l'holdout riusato e` invalidato come misura out-of-sample.
+    """
+    import logging as _logging
+
+    if key in _HOLDOUT_USED_KEYS:
+        msg = (f"⚠️  WARNING: holdout {key!r} gia` usato — riusarlo lo INVALIDA "
+               f"come misura out-of-sample (F3-V07).")
+        print(f"  {msg}")
+        _logging.getLogger(__name__).warning(msg)
+        return {"key": key, "reused": True}
+    _HOLDOUT_USED_KEYS.add(key)
+    if len(df_hold) == 0:
+        print("  🧪 Holdout: dati insufficienti (< 6 mesi), nessuna valutazione finale.")
+        return {"key": key, "reused": False, "n_rows": 0}
+    span = (pd.to_datetime(df_hold["datetime"].max())
+            - pd.to_datetime(df_hold["datetime"].min()))
+    bh = float(df_hold["close"].pct_change().fillna(0).sum() * 100.0)
+    print(f"  🧪 Holdout finale (una tantum): righe={len(df_hold):,} span={span} "
+          f"buy-hold={bh:.2f}% — MAI riusare per decisioni.")
+    return {"key": key, "reused": False, "n_rows": len(df_hold), "buy_hold_pct": bh}
 
 
 def _resolve_strategies(args, config: Config) -> List[str]:
@@ -241,6 +417,7 @@ def run_optuna_engine(
     print_top_results([best_result], top_n=1)
     print(f"  💾 Salvataggio risultati (best)...")
     output_dir = write_results([best_result], config, symbol, strategy=strategy)
+    _LAST_RESULTS[(symbol, strategy)] = [best_result]
     print(f"  💾 Study RDB: {study_db} (resume: riusa --search optuna con stesso db/study)")
     return output_dir
 
@@ -261,7 +438,6 @@ def run_standard_engine(
     print(f"  📦 Strategia: {strategy}")
     print(f"\n  🔄 Esecuzione {n_combinations} combinazioni...")
     results = []
-
     with Timer(f"Backtest {symbol} [{strategy}]"):
         for idx, params in enumerate(params_list, 1):
             # Progress ogni 10 combinazioni o alla fine
@@ -287,6 +463,7 @@ def run_standard_engine(
     # Salva risultati
     print(f"  💾 Salvataggio risultati...")
     output_dir = write_results(results, config, symbol, strategy=strategy)
+    _LAST_RESULTS[(symbol, strategy)] = results
     return output_dir
 
 
@@ -357,6 +534,7 @@ def run_standard_engine_mean_reversion(
     # Salva risultati
     print(f"  💾 Salvataggio risultati...")
     output_dir = write_results(results, config, symbol, strategy=strategy)
+    _LAST_RESULTS[(symbol, strategy)] = results
     return output_dir
 
 
@@ -410,6 +588,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     n_trials = _resolve_int_env(args.n_trials, "N_TRIALS", DEFAULT_N_TRIALS)
     n_jobs = _resolve_int_env(args.jobs, "OPTUNA_JOBS", DEFAULT_JOBS)
     study_db = _resolve_study_db(args)
+    validation_mode = _resolve_validation_mode(args)
     strategies = _resolve_strategies(args, config)
     if search == "optuna":
         if n_trials <= 0:
@@ -442,6 +621,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     print(f"  🏎️  Engine: {config.backtest_engine.upper()}")
     print(f"  🔍 Search: {search}"
           + (f" (n_trials={n_trials}, jobs={n_jobs}, db={study_db})" if search == "optuna" else ""))
+    print(f"  🧪 Validation: {validation_mode}"
+          + ("" if validation_mode == "off"
+             else f" (holdout ultimi {HOLDOUT_MONTHS} mesi, una tantum)"))
 
     # --- Esegui backtest per ogni simbolo ---
     all_output_dirs = []
@@ -462,6 +644,32 @@ def main(argv: Optional[List[str]] = None) -> None:
             n_candles = len(df)
             print(f"  📈 Candele caricate: {n_candles:,}")
 
+            # --- Holdout Fase 3 (F3-V07): con mode off tutto invariato ---
+            df_hold = None
+            if validation_mode == "off":
+                df_engine = df
+            else:
+                df_work, df_hold = split_holdout(df, HOLDOUT_MONTHS)
+                if len(df_hold) == 0:
+                    print(f"  ⚠️  Span < {HOLDOUT_MONTHS} mesi: holdout non disponibile, "
+                          f"validazione sul full.")
+                    df_engine = df
+                    df_hold = None
+                else:
+                    df_engine = df_work
+                    h0 = pd.to_datetime(df_hold["datetime"].iloc[0])
+                    h1 = pd.to_datetime(df_hold["datetime"].iloc[-1])
+                    print(f"  🧪 Working: {len(df_engine):,} candele | "
+                          f"Holdout: {len(df_hold):,} candele ({h0} → {h1}) "
+                          f"[MAI toccato da search/validazione]")
+
+            # Report strutturali una-tantum per simbolo (purged/walkforward
+            # sono data-only; cpcv e` per-strategia sotto, sui risultati).
+            if validation_mode == "purged":
+                run_purged_report(df_engine)
+            elif validation_mode == "walkforward":
+                run_walkforward_baseline(df_engine)
+
             # Routing search × engine × strategia (F1-S04 + F2-B03).
             # Grid: comportamento pre-Fase-2 invariato.
             # Optuna: path TPE standard per ogni strategia (ignora
@@ -470,30 +678,47 @@ def main(argv: Optional[List[str]] = None) -> None:
             for strategy in strategies:
                 if search == "optuna":
                     output_dir = run_optuna_engine(
-                        config, symbol, df, strategy=strategy,
+                        config, symbol, df_engine, strategy=strategy,
                         n_trials=n_trials, n_jobs=n_jobs, study_db=study_db,
                     )
+                    n_proxy = n_trials
                 elif config.backtest_engine == "gpu":
                     if strategy != "momentum_drop":
                         print(f"  ⚠️  Strategia {strategy} non supportata dal motore GPU "
                               f"(kernel momentum-only): salto.")
                         continue
-                    output_dir = run_gpu_engine(config, symbol, df)
+                    output_dir = run_gpu_engine(config, symbol, df_engine)
+                    n_proxy = n_combinations
                 elif config.backtest_engine == "fast":
                     if strategy != "momentum_drop":
                         print(f"  ⚠️  Strategia {strategy} non supportata dal motore FAST "
                               f"(kernel momentum-only): salto.")
                         continue
-                    output_dir = run_fast_engine(config, symbol, df)
+                    output_dir = run_fast_engine(config, symbol, df_engine)
+                    n_proxy = n_combinations
                 elif strategy == "momentum_drop":
                     output_dir = run_standard_engine(
-                        config, symbol, df, params_list, n_combinations,
+                        config, symbol, df_engine, params_list, n_combinations,
                         strategy=strategy,
                     )
+                    n_proxy = n_combinations
                 else:
                     output_dir = run_standard_engine_mean_reversion(
-                        config, symbol, df, strategy=strategy,
+                        config, symbol, df_engine, strategy=strategy,
                     )
+                    n_proxy = 4  # griglia dimostrativa 2x2 F1-S04
+
+                # CPCV trade-proxy sui risultati appena prodotti (F3-V07).
+                if validation_mode == "cpcv":
+                    run_cpcv_trade_proxy(
+                        _LAST_RESULTS.get((symbol, strategy), []), n_proxy)
+
+                # Holdout finale una-tantum per (simbolo, strategia) (F3-V07).
+                if df_hold is not None:
+                    h0 = pd.to_datetime(df_hold["datetime"].iloc[0])
+                    h1 = pd.to_datetime(df_hold["datetime"].iloc[-1])
+                    evaluate_holdout_once(
+                        df_hold, f"{symbol}:{strategy}:{h0}:{h1}")
 
                 all_output_dirs.append(output_dir)
 
