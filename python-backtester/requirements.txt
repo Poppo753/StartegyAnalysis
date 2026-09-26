@@ -2,5 +2,6 @@ pandas
 numpy
 python-dotenv
 numba
+optuna==5.0.0
 # Test suite spedita con il repo (tests/): necessario per `python -m pytest tests/`
 pytest

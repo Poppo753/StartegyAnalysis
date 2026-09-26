@@ -219,30 +219,30 @@ Lane D (UI, Fase 8): scheletro avviabile dopo F1+F2 (formati risultati + study O
 
 **Obiettivo**: Optuna al posto di `itertools.product`. Prerequisito: F1 chiusa. Nota v3 vincolante: TPE, non GP — niente formule EI/PI/UCB da implementare.
 
-- [ ] **F2-B01 · Dipendenze e scheletro searcher**
+- [x] **F2-B01 · Dipendenze e scheletro searcher**
   File: `requirements.txt` (+`optuna`), nuovo `src/searcher/__init__.py` + `src/searcher/bayesian_optimizer.py` (classe `BayesianOptimizer(strategy, n_startup_trials=20)` con `optimize(df, n_trials)`).
   DoD: `import optuna` ok in venv; scheletro importabile; `requirements.txt` aggiornato con versione pinnata (`optuna==x.y.z` da `pip freeze`).
   Dipendenze: F1. Stima: 0.25gg. Lane: A.
 
-- [ ] **F2-B02 · Objective su `parameter_space()` + TPESampler + MedianPruner**
+- [x] **F2-B02 · Objective su `parameter_space()` + TPESampler + MedianPruner**
   File: `src/searcher/bayesian_optimizer.py`.
   Operazione: `trial.suggest_*` guidato da `strategy.parameter_space()` con mappatura kind→suggest (`float`→`suggest_float`, `int`→`suggest_int`, `*_log`→`log=True`); score = `strategy.score(result)`; `trial.report` + `should_prune`; `TPESampler(n_startup_trials=20)`, `MedianPruner(n_warmup_steps=5)`.
   DoD: 20 trial su dataset piccolo terminano; trial potati registrati come `TrialPruned`, non come errori.
   Dipendenze: F2-B01. Stima: 1gg. Lane: A.
 
-- [ ] **F2-B03 · Parser CLI in `main.py` + flag `--search {grid,optuna}`**
+- [x] **F2-B03 · Parser CLI in `main.py` + flag `--search {grid,optuna}`**
   File: `main.py` (verificato: NESSUN argparse oggi — va creato `parse_args()`), `src/config.py` (`search_method`, `n_trials`, default che preserva comportamento attuale = grid).
   Operazione: creare `parse_args()` con precedenza esplicita **CLI > .env > default** (documentata in `--help` e nel report di fase); routing grid vs optuna per strategia; study salvato su `optimization_study_optuna.db` (storage RDB ripristinabile). Questo parser è riusato da F3-V07 (`--validation-mode`) e F4-G05 (`--llm-assist`): disegnarlo estendibile, non monouso.
   DoD: `--search grid` ≡ output pre-Fase-2; `--search optuna --n-trials 30` produce `best_params` + db file; `main.py` senza argomenti ≡ comportamento pre-Fase-2 (retrocompatibilità totale).
   Dipendenze: F2-B02. Stima: 0.75gg. Lane: A (lock `main.py`).
 
-- [ ] **F2-B04 · Parità grid-vs-BO (test di correttezza)**
+- [x] **F2-B04 · Parità grid-vs-BO (test di correttezza)**
   File: `tests/test_bayesian_optimizer.py` (nuovo).
   Operazione: spazio piccolo enumerabile (es. 3×3×3=27): BO con budget ≥ 27 ritrova l'ottimo grid entro tolleranza in ≥4 seed su 5 (criterio onesto per ottimizzatore stocastico: MAI "deve sempre"); con budget 10 batte la media random su 5 seed.
   DoD: test verdi; tolleranza e seed documentati nel test.
   Dipendenze: F2-B03. Stima: 0.75gg. Lane: A.
 
-- [ ] **F2-B05 · Parallel workers (`n_jobs=4`) + doc uso**
+- [x] **F2-B05 · Parallel workers (`n_jobs=4`) + doc uso**
   Operazione: `study.optimize(..., n_jobs=4)` con backend thread-safe (strategia senza stato globale; `njit` rilascia il GIL di default — verificare, non presumere); uso documentato nel report di chiusura Fase 2 (comandi, db, resume), non in README sparsi.
   DoD: run 4-job < 2.5× il tempo 1-job sullo stesso budget (speedup > 1.6×); resume da db esistente verificato.
   Dipendenze: F2-B04. Stima: 0.5gg. Lane: A.

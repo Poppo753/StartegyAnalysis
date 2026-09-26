@@ -42,7 +42,207 @@ from src.utils import (
 )
 
 import pandas as pd
-from typing import List
+from typing import List, Optional
+
+# Default Fase 2 (usati quando né CLI né .env li definiscono).
+DEFAULT_SEARCH = "grid"
+DEFAULT_N_TRIALS = 50
+DEFAULT_JOBS = 1
+DEFAULT_STUDY_DB = "optimization_study_optuna.db"
+
+
+def parse_args(argv: Optional[List[str]] = None):
+    """Parser CLI estendibile (Fase 2, F2-B03).
+
+    Precedenza (documentata anche in --help): CLI > .env > default.
+    - --search: CLI > .env SEARCH_METHOD > default "grid".
+    - --n-trials: CLI > .env N_TRIALS > default 50.
+    - --strategy: CLI (ripetibile/comma-separated) > config.strategies
+      (da .env STRATEGIES) — riusa il registry src/strategies.
+    - --jobs: CLI > .env OPTUNA_JOBS > default 1.
+    - --study-db: CLI > .env OPTUNA_STUDY_DB > default
+      optimization_study_optuna.db.
+
+    Estendibilità: F3 aggiungerà --validation-mode, F4 --llm-assist
+    in questo stesso parser (non creare nuovi parser monouso).
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Python Backtester (Fase 2: grid + Optuna TPE). "
+            "Precedenza valori: CLI > .env > default."
+        ),
+        epilog=(
+            "Env supportati: SEARCH_METHOD, N_TRIALS, OPTUNA_JOBS, "
+            "OPTUNA_STUDY_DB, STRATEGIES (via config). "
+            "Estendibile: F3 aggiungerà --validation-mode, "
+            "F4 --llm-assist qui."
+        ),
+    )
+    parser.add_argument(
+        "--search",
+        choices=["grid", "optuna"],
+        default=None,
+        help=(
+            "Metodo ricerca (default: grid = comportamento pre-Fase-2). "
+            "Precedenza: CLI > .env SEARCH_METHOD > default grid."
+        ),
+    )
+    parser.add_argument(
+        "--n-trials",
+        dest="n_trials",
+        type=int,
+        default=None,
+        help=(
+            "Budget trial Optuna (solo con --search optuna). "
+            "Precedenza: CLI > .env N_TRIALS > default 50."
+        ),
+    )
+    parser.add_argument(
+        "--strategy",
+        dest="strategy",
+        action="append",
+        default=None,
+        help=(
+            "Strategia dal registry (ripetibile o comma-separated, "
+            "es. --strategy momentum_drop --strategy mean_reversion). "
+            "Default: config.strategies (da .env STRATEGIES)."
+        ),
+    )
+    parser.add_argument(
+        "--jobs",
+        dest="jobs",
+        type=int,
+        default=None,
+        help=(
+            "Job paralleli Optuna (study.optimize n_jobs). "
+            "Precedenza: CLI > .env OPTUNA_JOBS > default 1. "
+            "F2-B05: usare 4 per il parallelo thread-safe."
+        ),
+    )
+    parser.add_argument(
+        "--study-db",
+        dest="study_db",
+        default=None,
+        help=(
+            "Path file SQLite Optuna RDB (resumable, load_if_exists). "
+            "Precedenza: CLI > .env OPTUNA_STUDY_DB > "
+            "default optimization_study_optuna.db."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def _resolve_search(args) -> str:
+    cli = (args.search or "").strip().lower() if args.search else ""
+    if cli:
+        return cli
+    env = os.getenv("SEARCH_METHOD", "").strip().lower()
+    if env:
+        if env not in ("grid", "optuna"):
+            print(f"❌ ERRORE configurazione: SEARCH_METHOD={env!r} non valido (grid|optuna)")
+            sys.exit(1)
+        return env
+    return DEFAULT_SEARCH
+
+
+def _resolve_int_env(cli_val, env_name: str, default: int) -> int:
+    if cli_val is not None:
+        return int(cli_val)
+    raw = os.getenv(env_name, "").strip()
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            print(f"❌ ERRORE configurazione: {env_name}={raw!r} non intero")
+            sys.exit(1)
+    return default
+
+
+def _resolve_study_db(args) -> str:
+    if args.study_db:
+        return str(args.study_db)
+    env = os.getenv("OPTUNA_STUDY_DB", "").strip()
+    return env if env else DEFAULT_STUDY_DB
+
+
+def _resolve_strategies(args, config: Config) -> List[str]:
+    if not args.strategy:
+        return list(config.strategies)
+    out: List[str] = []
+    for item in args.strategy:
+        for part in str(item).split(","):
+            name = part.strip().lower()
+            if name:
+                out.append(name)
+    # Deduplica preservando ordine.
+    seen = set()
+    uniq = []
+    for s in out:
+        if s not in seen:
+            seen.add(s)
+            uniq.append(s)
+    return uniq if uniq else list(config.strategies)
+
+
+def run_optuna_engine(
+    config: Config,
+    symbol: str,
+    df: pd.DataFrame,
+    strategy: str = "momentum_drop",
+    n_trials: int = DEFAULT_N_TRIALS,
+    n_jobs: int = DEFAULT_JOBS,
+    study_db: str = DEFAULT_STUDY_DB,
+) -> str:
+    """Esegue la ricerca Optuna TPE sullo path motore standard (F2-B03).
+
+    Crea/riuso study RDB sqlite:///<study_db> con nome
+    optuna_<symbol>_<strategy> (load_if_exists=True → resumable),
+    ottimizza strategy.score(result), rivaluta il best per CSV.
+    """
+    from src.searcher import BayesianOptimizer
+
+    cls = STRATEGY_REGISTRY[strategy]
+    strat_obj = cls()
+    is_mr = type(strat_obj).__name__ == "MeanReversionZScore" or strategy in (
+        "mean_reversion",
+        "mean_reversion_zscore",
+    )
+    base_params = {
+        "max_hold_seconds": config.max_hold_seconds,
+        "initial_capital": config.initial_capital,
+        "position_size": config.position_size,
+        "fee_rate": config.fee_rate,
+        "slippage_rate": config.slippage_rate,
+        "direction": "long" if is_mr else config.direction,
+    }
+    storage = f"sqlite:///{study_db}"
+    study_name = f"optuna_{symbol}_{strategy}"
+    print(f"\n  🔧 Engine: OPTUNA (TPE)")
+    print(f"  📦 Strategia: {strategy}")
+    print(f"  🎯 Trial: {n_trials} | jobs: {n_jobs} | db: {study_db} | study: {study_name}")
+    opt = BayesianOptimizer(
+        strat_obj,
+        n_startup_trials=20,
+        base_params=base_params,
+        symbol=symbol,
+        storage=storage,
+        study_name=study_name,
+        n_jobs=n_jobs,
+    )
+    out = opt.optimize(df, n_trials=int(n_trials), n_jobs=int(n_jobs))
+    best_params = out["best_params"]
+    best_value = out["best_value"]
+    print(f"  🏆 Best value (score): {best_value:.6f}")
+    print(f"  🏆 Best params: {best_params}")
+    # Rivaluta il best sullo stesso path per produrre CSV/drawdown coerenti.
+    _, best_result = opt._evaluate(best_params, df)
+    print_top_results([best_result], top_n=1)
+    print(f"  💾 Salvataggio risultati (best)...")
+    output_dir = write_results([best_result], config, symbol, strategy=strategy)
+    print(f"  💾 Study RDB: {study_db} (resume: riusa --search optuna con stesso db/study)")
+    return output_dir
 
 
 def run_standard_engine(
@@ -191,8 +391,9 @@ def run_gpu_engine(config: Config, symbol: str, df: pd.DataFrame) -> str:
     return output_dir
 
 
-def main() -> None:
+def main(argv: Optional[List[str]] = None) -> None:
     """Funzione principale del backtester (boundary CLI: unici sys.exit consentiti)."""
+    args = parse_args(argv)
     # --- Header ---
     print_header()
 
@@ -204,12 +405,26 @@ def main() -> None:
         print(f"❌ ERRORE configurazione: {e}")
         sys.exit(1)
 
+    # --- Risolvi ricerca/strategy con precedenza CLI > .env > default ---
+    search = _resolve_search(args)
+    n_trials = _resolve_int_env(args.n_trials, "N_TRIALS", DEFAULT_N_TRIALS)
+    n_jobs = _resolve_int_env(args.jobs, "OPTUNA_JOBS", DEFAULT_JOBS)
+    study_db = _resolve_study_db(args)
+    strategies = _resolve_strategies(args, config)
+    if search == "optuna":
+        if n_trials <= 0:
+            print(f"❌ ERRORE configurazione: --n-trials/N_TRIALS deve essere > 0 ({n_trials})")
+            sys.exit(1)
+        if n_jobs <= 0:
+            print(f"❌ ERRORE configurazione: --jobs/OPTUNA_JOBS deve essere > 0 ({n_jobs})")
+            sys.exit(1)
+
     # --- Genera griglia parametri (usata anche per conteggio) ---
     params_list = generate_parameter_grid(config)
     n_combinations = len(params_list)
 
-    # --- Valida strategie richieste (F1-S04) ---
-    unknown = [s for s in config.strategies if s not in STRATEGY_REGISTRY]
+    # --- Valida strategie richieste (F1-S04; CLI --strategy riusa config.strategies) ---
+    unknown = [s for s in strategies if s not in STRATEGY_REGISTRY]
     if unknown:
         print(f"❌ ERRORE configurazione: strategie sconosciute: {unknown} "
               f"(disponibili: {sorted(STRATEGY_REGISTRY)})")
@@ -223,8 +438,10 @@ def main() -> None:
         n_combinations=n_combinations,
         direction=config.direction,
     )
-    print(f"  🧩 Strategie: {', '.join(config.strategies)}")
+    print(f"  🧩 Strategie: {', '.join(strategies)}")
     print(f"  🏎️  Engine: {config.backtest_engine.upper()}")
+    print(f"  🔍 Search: {search}"
+          + (f" (n_trials={n_trials}, jobs={n_jobs}, db={study_db})" if search == "optuna" else ""))
 
     # --- Esegui backtest per ogni simbolo ---
     all_output_dirs = []
@@ -245,11 +462,18 @@ def main() -> None:
             n_candles = len(df)
             print(f"  📈 Candele caricate: {n_candles:,}")
 
-            # Routing engine × strategia (F1-S04).
-            # Motori fast/gpu: kernel hardcoded su momentum_drop → le altre
-            # strategie sono supportate solo con il motore standard.
-            for strategy in config.strategies:
-                if config.backtest_engine == "gpu":
+            # Routing search × engine × strategia (F1-S04 + F2-B03).
+            # Grid: comportamento pre-Fase-2 invariato.
+            # Optuna: path TPE standard per ogni strategia (ignora
+            # backtest_engine fast/gpu: i kernel sono momentum-only e non
+            # espongono score; BO usa sempre lo standard path + RDB resumable).
+            for strategy in strategies:
+                if search == "optuna":
+                    output_dir = run_optuna_engine(
+                        config, symbol, df, strategy=strategy,
+                        n_trials=n_trials, n_jobs=n_jobs, study_db=study_db,
+                    )
+                elif config.backtest_engine == "gpu":
                     if strategy != "momentum_drop":
                         print(f"  ⚠️  Strategia {strategy} non supportata dal motore GPU "
                               f"(kernel momentum-only): salto.")
