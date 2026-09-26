@@ -1,0 +1,6 @@
+pandas
+numpy
+python-dotenv
+numba
+# Test suite spedita con il repo (tests/): necessario per `python -m pytest tests/`
+pytest

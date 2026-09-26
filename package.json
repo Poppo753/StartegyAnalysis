@@ -1,0 +1,37 @@
+{
+  "name": "binance-ohlc-pipeline",
+  "version": "1.0.0",
+  "description": "Pipeline to download historical crypto data from Binance Spot API and build 1-second OHLC datasets",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "aggregate": "tsx src/aggregateOnly.ts",
+    "extract": "tsx src/extractRange.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "jest",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [
+    "binance",
+    "crypto",
+    "ohlc",
+    "pipeline",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "jszip": "^3.10.2"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.14.0",
+    "jest": "^30.5.2",
+    "ts-jest": "^29.4.14",
+    "tsx": "^4.15.0",
+    "typescript": "^5.9.3"
+  }
+}

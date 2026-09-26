@@ -1,0 +1,165 @@
+📊 ARCHITETTURA GENERALE
+La repo è un progetto di trading crypto con due componenti principali:
+1. TypeScript Pipeline (src/) — Scarica dati aggTrades da Binance e li converte in OHLC 1s
+2. Python Backtester (python-backtester/) — Simula strategie "Momentum + Drop" sui dati OHLC generati
+🔴 PROBLEMI CRITICI TROVATI
+1. TYPEORM/TypeScript — Bug nel Retry Logic (binanceClient.ts)
+// PROBLEMA: Il contatore retry viene incrementato MA il delay è calcolato
+// con `retries > MAX_RETRIES` invece di `retries >= MAX_RETRIES`
+// E il delay esponenziale usa `retries - 1` ma parte da 1 dopo il primo errore
+Problema: Se MAX_RETRIES = 5, il loop while(true) può fare fino a 6 tentativi prima di lanciare l'errore. Il calcolo del delay RETRY_BASE_DELAY_MS * Math.pow(2, retries - 1) è errato nel primo retry (dovrebbe essere retries non retries - 1).
+2. TypeScript — Race Condition nel Merge File (downloadAggTrades.ts)
+// PROBLEMA: mergeDayFiles() usa fs.readFileSync e fs.appendFileSync in modo sincrono
+// ma le chiamate a downloadAggTrades() sono parallele. Più giorni possono
+// tentare di scrivere sullo stesso file contemporaneamente.
+Problema: Il merge avviene DOPO runWithConcurrency, ma ogni worker scrive il proprio file giornaliero. Se due giorni finiscono con lo stesso nome di file, ci saranno race condition.
+3. Python — Bug signal-only in _calculate_pnl (simulator.py)
+# PROBLEMA: In signal-only, fees = 0.0 è commentato come "Nessuna fee in signal-only"
+# ma il calcolo dei fees è stato già fatto PRIMA di questa condizione:
+# fees = params.position_size * params.fee_rate * 2.0
+# Poi viene sovrascritto a 0.0, ma la variabile fees è già calcolata inutilmente.
+Meno critico: è solo inefficienza, non un bug funzionale.
+4. Python — Bug di Concurrency nel Fast Engine (fast_runner.py)
+# PROBLEMA: Il warmup numba usa i primi 100 dati ma NON verifica che
+# i dati abbiano almeno 100 righe prima di fare il warmup.
+Rischio: Se il dataset ha meno di 100 candele, il warmup crasha.
+5. Python — Bug nello Split Train/Validation (data_splitter.py)
+# PROBLEMA: Lo split è basato su INDICE, non su DATA.
+# Se i dati non sono perfettamente uniformi, il 70% potrebbe non corrispondere
+# esattamente al 70% del periodo temporale.
+Esempio: Se ci sono 1000 righe ma 200 sono del 2026-01-01 e 800 del 2026-01-02, lo split a indice 700 metterebbe tutto il 2026-01-01 in TRAIN e metà del 2026-01-02 in VALIDATION.
+6. TypeScript — Perdita di Dati nel Filtro (downloadAggTrades.ts)
+// PROBLEMA: Il filtro `t.T >= startMs && t.T < endMs && t.T <= windowEndMs`
+// è ridondante (t.T <= windowEndMs è già implicito da startTime/endTime).
+// MA il problema è che `startTime` è `lastTradeId === undefined ? currentStartMs : undefined`
+// Quando lastTradeId è definito, startTime è undefined e il filtro non filtra per start.
+Rischio: Potenziale perdita o duplicazione di dati ai boundary dei window.
+7. Python — Import Path Issues (data_loader.py, simulator.py, ecc.)
+# PROBLEMA: Usano `from src.config import Config` ma dipende dal contesto di esecuzione.
+# Con `python main.py` funziona grazie a sys.path.insert(0, os.path.dirname(...))
+# Ma se importato come modulo, fallisce.
+8. TypeScript — bulkAvailability.ts Parsing XML Fragile
+// PROBLEMA: Usa `xml.includes(zipFile)` per verificare disponibilità.
+// Se il nome del file appare come substring di un altro nome, falso positivo.
+Esempio: Se BTCUSDT-aggTrades-2024-01-01.zip è disponibile, xml.includes("BTCUSDT-aggTrades-2024-01-01.zip") potrebbe matchare anche BTCUSDT-aggTrades-2024-01-01.zip.backup.
+🟡 PROBLEMI MEDI
+9. TypeScript — Memory Leak in jsonlWriter.ts
+// PROBLEMA: writeAggTradesJsonl() carica TUTTI i trades in memoria con .map().join()
+// Per giorni con milioni di trade, questo può consumare GB di RAM.
+Miglioramento: Scrivere in streaming.
+10. TypeScript — aggregateToOhlc.ts Non Usato
+// PROBLEMA: aggregateToOhlc1s() in aggregateToOhlc.ts non viene mai chiamato.
+// La pipeline usa aggregateFileToOhlc1s() in aggregateStreaming.ts.
+// Questo file è codice morto.
+11. Python — trade_profile.py e stoploss_analysis.py Duplicano Logica
+# PROBLEMA: Entrambi i file hanno `load_trades()`, `_fmt()`, `_diagnose()` con logica simile.
+# Dovrebbero essere in un modulo condiviso.
+12. Python — GPU Kernel con Bug di Thread Safety (gpu_simulator.py)
+// PROBLEMA: Il kernel CUDA usa `while (k >= 0)` con `k -= 1` per cercare il minimo.
+// Questo è O(n) per ogni candela, rendendo il kernel O(n²) in pratica.
+// Inoltre, la memoria globale non è ottimizzata per accessi coerenti.
+13. Python — gpu_fallback.py Usa prange Ma Non Thread-Safe
+# PROBLEMA: @njit(parallel=True) con prange ma le variabili sono condivise.
+// Non ci sono race condition perché ogni tid scrive in results[tid, ...],
+// ma la logica interna non è ottimizzata.
+14. TypeScript — extractRange.ts Ha Logica Duplicata con aggregateStreaming.ts
+// PROBLEMA: La logica di aggregazione OHLC è copiata/incollata.
+// Dovrebbe essere estratta in un modulo condiviso.
+15. Python — config.py Usa sys.exit() Invece di Eccezioni
+# PROBLEMA: Ogni errore di configurazione chiama sys.exit(1).
+// Non è testabile, non gestisce errori graceful.
+16. TypeScript — bulkDownloader.ts Usa child_process per Unzip
+// PROBLEMA: Dipende da `unzip` o PowerShell disponibili nel sistema.
+// Non funziona su container Docker minimal o server Linux senza `unzip` installato.
+Alternativa: Usare jszip come dependency.
+17. Python — Manca Type Hints Coerenti
+# PROBLEMA: Molti file usano type hints incoerenti o assenti.
+# trade_profile.py, stoploss_analysis.py non usano type hints nei parametri delle funzioni.
+🟢 ASPETTI POSITIVI
+1. Architettura modulare ben strutturata — TypeScript e Python hanno chiara separazione dei responsabilità
+2. Streaming efficiente — aggregateStreaming.ts e extractRange.ts processano file line-by-line senza caricare tutto in memoria
+3. Multi-engine approach — Python ha 3 livelli di performance (standard/fast/gpu)
+4. Anti-overfitting — Il sistema GPU ha train/validation split temporale
+5. Bulk download fallback — Il sistema scarica da data.binance.vision quando disponibile, altrimenti usa REST API
+6. Rate limiting robusto — GlobalRateLimiter + request delay + exponential backoff
+7. Formato dati coerente — JSONL per raw, CSV per OHLC, struttura standardizzata
+🏗️ MIGLIORAMENTI PROPOSTI (Ordine di Priorità)
+Priorità 1 — Bug Fix Critici
+#	Cambiamento	Motivo
+1	Fix retry logic in binanceClient.ts: retries >= MAX_RETRIES, Math.pow(2, retries)	Previne più retry del necessario e calcolo errato
+2	Fix merge race condition in downloadAggTrades.ts usando fs.writeFileSync atomico o lock	Previne corruzione dati
+3	Fix data_splitter.py per split basato su DATA non su INDICE	Garantisce corretta separazione temporale
+4	Fix bug timestamp in downloadAggTrades.ts quando lastTradeId è definito	Previene perdita dati
+Priorità 2 — Performance & Robustezza
+#	Cambiamento
+5	Sostituire child_process unzip con jszip in bulkDownloader.ts
+6	Convertire jsonlWriter.ts in streaming
+7	Aggiungere protezione fallback in fast_runner.py per dataset < 100 righe
+8	Sostituire sys.exit() con eccezioni in config.py
+9	Fix bulkAvailability.ts parsing XML (usare regex o parser XML)
+Priorità 3 — Code Quality & Maintainability
+#	Cambiamento
+10	Estrarre logica OHLC aggregation condivisa tra aggregateStreaming.ts e extractRange.ts
+11	Rimuovere aggregateToOhlc.ts (codice morto) o reintegrarlo
+12	Creare modulo condiviso trade_utils.py per trade_profile.py e stoploss_analysis.py
+13	Aggiungere type hints completi in tutti i file Python
+14	Aggiungere test unitari per simulator.py, config.py, strategy.py
+15	Aggiungere requirements.txt per TypeScript (tsconfig.json ha solo devDependencies)
+Priorità 4 — Feature Enhancements
+#	Cambiamento
+16	Aggiungere compressione gzip ai file JSONL
+17	Aggiungere checksum/integrity verification per i dati scaricati
+18	Implementare caching in bulkAvailability.ts per non rifare S3 request
+19	Aggiungere supporto per data.binance.vision come sorgente primaria
+20	Aggiungere pyproject.toml per Python con dipendenze esatte
+21	Aggiungere Dockerfile per ambiente riproducibile
+22	Aggiungere logging strutturato (JSON) invece di console.log
+23	Aggiungere metriche MAE/MFE nel backtester standard (attualmente solo trade_profile.py le calcola)
+24	Aggiungere validazione cruzata (K-fold temporale) oltre al semplice split 70/30
+25	Aggiungere py-spy o profiler integrato per identificare colli di bottiglia
+📐 DETTAGLIO TECNICO DEI CAMBIAMENTI CHIAVI
+Fix 1: binanceClient.ts — Retry Logic
+// PRIMA (bug):
+if (retries > MAX_RETRIES) { throw error; }
+const retryDelay = RETRY_BASE_DELAY_MS * Math.pow(2, retries - 1);
+
+// DOPO (fix):
+if (retries >= MAX_RETRIES) { throw error; }
+const retryDelay = RETRY_BASE_DELAY_MS * Math.pow(2, retries);
+Fix 2: data_splitter.py — Data-based Split
+# PRIMA:
+split_idx = int(n * train_ratio)  # Split per indice
+
+# DOPO:
+split_date = df["datetime"].iloc[int(n * train_ratio)]  # Split per data
+df_train = df[df["datetime"] <= split_date].reset_index(drop=True)
+df_validation = df[df["datetime"] > split_date].reset_index(drop=True)
+Fix 3: downloadAggTrades.ts — Race Condition nel Merge
+// PRIMA: async workers scrivono file, poi mergeDayFiles() li legge
+// DOPO: Usare un singolo writer serializzato con writeAggTradesJsonl
+// e merge finale solo ordinamento
+Aggiunta: jszip per Unzip Cross-Platform
+// package.json
+"dependencies": {
+  "jszip": "^3.10.1"
+}
+// bulkDownloader.ts — Sostituire child_process con jszip
+import { ZipFile } from 'jszip';
+
+async function unzipFile(zipPath: string, targetDir: string): Promise<void> {
+  const zip = await ZipFile.loadAsync(await fs.promises.readFile(zipPath));
+  for (const [name, file] of Object.entries(zip.files)) {
+    const content = await file.async('nodebuffer');
+    await fs.promises.writeFile(path.join(targetDir, name), content);
+  }
+}
+🎯 RACCOMANDAZIONE FINALE
+I cambiamenti più impattanti in ordine di ROI:
+1. Fix bug retry logic (15 min, previene perdita dati)
+2. Fix race condition merge (30 min, previene corruzione dati)  
+3. Fix data-based split (20 min, garantisce anti-overfitting corretto)
+4. Sostituire child_process con jszip (1h, migliora portabilità)
+5. Estrarre logica OHLC condivisa (2h, riduce duplicazione)
+6. Aggiungere test unitari (4-8h, fondamentale per produzione)
+7. Aggiungere gzip compression (3h, risparmio storage 80%)
+Vuoi che proceda con l'implementazione di uno o più di questi cambiamenti?

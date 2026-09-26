@@ -1,0 +1,49 @@
+# ============================================================
+# Dipendenze (si reinstallano, MAI nel repo)
+# ============================================================
+node_modules/
+python-backtester/.venv/
+.venv/
+venv/
+
+# ============================================================
+# Build output
+# ============================================================
+dist/
+build/
+*.tsbuildinfo
+coverage/
+
+# ============================================================
+# Dati e risultati generati (grandi, rigenerabili)
+# ============================================================
+data/
+python-backtester/backtest-results/
+python-backtester/output*.txt
+output*.txt
+*.csv
+*.jsonl
+*.jsonl.gz
+
+# ============================================================
+# Cache Python / test
+# ============================================================
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ============================================================
+# Segreti locali (restano fuori; usare env.example come template)
+# ============================================================
+.env
+
+# ============================================================
+# OS / editor
+# ============================================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

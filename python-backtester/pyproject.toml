@@ -1,0 +1,24 @@
+[project]
+name = "python-backtester"
+version = "0.1.0"
+description = "A Python backtesting framework with GPU acceleration and temporal cross-validation"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas",
+    "numpy",
+    "python-dotenv",
+    "numba",
+    # Test suite spedita con il repo (tests/): cfr. requirements.txt
+    "pytest",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+# Nota: la config pytest resta in pytest.ini (single source of truth)
+# per evitare il warning "ignoring pytest config in pyproject.toml".
