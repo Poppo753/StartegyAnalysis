@@ -302,27 +302,27 @@ Lane D (UI, Fase 8): scheletro avviabile dopo F1+F2 (formati risultati + study O
 
 **Obiettivo**: crossover/mutation parametrici + template registry. Prerequisito: F1 (F3 raccomandato per validare i generati). **LLM esplicitamente opzionale.**
 
-- [ ] **F4-G01 · `src/generator/strategy_generator.py`: tipi e registry**
+- [x] **F4-G01 · `src/generator/strategy_generator.py`: tipi e registry**
   Operazione: `TEMPLATE_REGISTRY` (momentum_drop, mean_reversion_zscore, breakout, grid — spazi parametrici v3 §5.4); `generate_from_template(name, rng: np.random.Generator)` → dict parametri validati via `strategy.validate`.
   DoD: 100 generazioni → 100% `validate() == True`; seed riproducibile.
   Dipendenze: F1. Stima: 1gg. Lane: A.
 
-- [ ] **F4-G02 · `StrategyCrossover` (a livelli: archetipo / parametri / filtri)**
+- [x] **F4-G02 · `StrategyCrossover` (a livelli: archetipo / parametri / filtri)**
   Operazione: crossover parametrico (media/ranga per parametro) + crossover strutturale (entry di A + filtri di B) secondo genoma v3 §4.3; figli sempre validati, scartati se invalidi.
   DoD: figli di 2 strategie note → validi; test che entry-A/filtri-B si compongono senza eccezioni.
   Dipendenze: F4-G01. Stima: 1.5gg. Lane: A.
 
-- [ ] **F4-G03 · `StrategyMutation` (parametrica / strutturale / risk)**
+- [x] **F4-G03 · `StrategyMutation` (parametrica / strutturale / risk)**
   Operazione: mutazioni con ampiezza parametrizzata (σ per parametro continuo, ±1 per interi, swap per categorici); rate default 0.05.
   DoD: distribuzione delle mutazioni verificata statisticamente su 1.000 campioni (media≈0, supporto nei bounds).
   Dipendenze: F4-G01. Stima: 1gg. Lane: A.
 
-- [ ] **F4-G04 · Loop evolutivo + validazione dei generati (100 strategie test)**
+- [x] **F4-G04 · Loop evolutivo + validazione dei generati (100 strategie test)**
   Operazione: popolazione 50 × 10 generazioni su dataset piccolo (= 500 valutazioni); ogni generato passa F3-light (split + PBO su sample ridotto, come esercizio del path — NON come giudizio di accettazione); log genealogia (genitori → figlio → score).
   DoD: tutti i generati loggati eseguibili (≥100 ispezionati); top-5 con score > baseline random; genealogia ispezionabile.
   Dipendenze: F4-G02, F4-G03 (F3-V03 per PBO-light). Stima: 2gg. Lane: A.
 
-- [ ] **F4-G05 · (OPZIONALE, esplicito) LLM-assistito — solo se richiesto dopo F4-G04**
+- [x] **F4-G05 · (OPZIONALE, esplicito) LLM-assistito — solo se richiesto dopo F4-G04**
   Operazione: prompt template v3 §5.4 + sandbox di validazione (compila? implementa interfaccia? genera segnali su fixture?); rigetto automatico se fallisce un gate.
   DoD: attivabile solo con flag `--llm-assist`; zero dipendenze obbligatorie aggiunte al core.
   Dipendenze: F4-G04. Stima: 2–3gg. Lane: A. **Default: NON fare.**
