@@ -126,6 +126,18 @@ def parse_args(argv: Optional[List[str]] = None):
         ),
     )
     parser.add_argument(
+        "--symbol",
+        dest="symbol",
+        action="append",
+        default=None,
+        metavar="SYM",
+        help=(
+            "Simbolo da testare (ripetibile). "
+            "Precedenza: CLI > .env SYMBOLS > config. "
+            "Usato dalla UI per lanciare un singolo simbolo senza toccare .env."
+        ),
+    )
+    parser.add_argument(
         "--jobs",
         dest="jobs",
         type=int,
@@ -157,6 +169,17 @@ def parse_args(argv: Optional[List[str]] = None):
             "off: nessun split, flusso invariato. purged/cpcv/walkforward: "
             "holdout = ultimi 6 mesi MAI toccati da ricerca/validazione, "
             "usati una sola volta a fine protocollo (riuso = warning)."
+        ),
+    )
+    parser.add_argument(
+        "--engine",
+        dest="engine",
+        choices=["standard", "fast", "gpu"],
+        default=None,
+        help=(
+            "Motore di backtest (default: standard). "
+            "Precedenza: CLI > .env BACKTEST_ENGINE > default standard. "
+            "standard: Python puro + pandas. fast: Numba JIT. gpu: GPU screening."
         ),
     )
     return parser.parse_args(argv)
@@ -208,6 +231,30 @@ def _resolve_validation_mode(args) -> str:
             sys.exit(1)
         return env
     return DEFAULT_VALIDATION_MODE
+
+
+def _resolve_engine(args, config: Config) -> str:
+    """Risolvi --engine con precedenza CLI > .env > config > default standard."""
+    cli = (args.engine or "").strip().lower() if args.engine else ""
+    if cli:
+        if cli not in ["standard", "fast", "gpu"]:
+            print(f"❌ ERRORE configurazione: --engine={cli!r} non valido (standard|fast|gpu)")
+            sys.exit(1)
+        return cli
+    # Fallback to config.backtest_engine (which reads from .env BACKTEST_ENGINE)
+    return config.backtest_engine
+
+
+def _resolve_symbols(args, config: Config) -> list:
+    """Risolvi --symbol (ripetibile) con precedenza CLI > .env > config.
+
+    Usato dalla UI per lanciare un singolo simbolo senza toccare .env.
+    """
+    cli_items = list(getattr(args, "symbol", None) or [])
+    symbols = [s.strip().upper() for s in cli_items if s and s.strip()]
+    if symbols:
+        return symbols
+    return list(config.symbols)
 
 
 def split_holdout(df: pd.DataFrame, months: int = HOLDOUT_MONTHS):
@@ -381,7 +428,9 @@ def run_optuna_engine(
 
     cls = STRATEGY_REGISTRY[strategy]
     strat_obj = cls()
-    is_mr = type(strat_obj).__name__ == "MeanReversionZScore" or strategy in (
+    is_mr = type(strat_obj).__name__ in (
+        "MeanReversionZScore",
+    ) or strategy in (
         "mean_reversion",
         "mean_reversion_zscore",
     )
@@ -589,6 +638,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     n_jobs = _resolve_int_env(args.jobs, "OPTUNA_JOBS", DEFAULT_JOBS)
     study_db = _resolve_study_db(args)
     validation_mode = _resolve_validation_mode(args)
+    engine = _resolve_engine(args, config)
     strategies = _resolve_strategies(args, config)
     if search == "optuna":
         if n_trials <= 0:
@@ -618,7 +668,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         direction=config.direction,
     )
     print(f"  🧩 Strategie: {', '.join(strategies)}")
-    print(f"  🏎️  Engine: {config.backtest_engine.upper()}")
+    print(f"  🏎️  Engine: {engine.upper()}")
     print(f"  🔍 Search: {search}"
           + (f" (n_trials={n_trials}, jobs={n_jobs}, db={study_db})" if search == "optuna" else ""))
     print(f"  🧪 Validation: {validation_mode}"
@@ -629,7 +679,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     all_output_dirs = []
 
     with Timer("Tempo totale") as total_timer:
-        for symbol in config.symbols:
+        for symbol in _resolve_symbols(args, config):
             print(f"\n{'='*60}")
             print(f"  📊 Simbolo: {symbol}")
             print(f"{'='*60}")
@@ -682,14 +732,14 @@ def main(argv: Optional[List[str]] = None) -> None:
                         n_trials=n_trials, n_jobs=n_jobs, study_db=study_db,
                     )
                     n_proxy = n_trials
-                elif config.backtest_engine == "gpu":
+                elif engine == "gpu":
                     if strategy != "momentum_drop":
                         print(f"  ⚠️  Strategia {strategy} non supportata dal motore GPU "
                               f"(kernel momentum-only): salto.")
                         continue
                     output_dir = run_gpu_engine(config, symbol, df_engine)
                     n_proxy = n_combinations
-                elif config.backtest_engine == "fast":
+                elif engine == "fast":
                     if strategy != "momentum_drop":
                         print(f"  ⚠️  Strategia {strategy} non supportata dal motore FAST "
                               f"(kernel momentum-only): salto.")
@@ -702,11 +752,15 @@ def main(argv: Optional[List[str]] = None) -> None:
                         strategy=strategy,
                     )
                     n_proxy = n_combinations
-                else:
+                elif strategy in ("mean_reversion", "mean_reversion_zscore"):
                     output_dir = run_standard_engine_mean_reversion(
                         config, symbol, df_engine, strategy=strategy,
                     )
                     n_proxy = 4  # griglia dimostrativa 2x2 F1-S04
+                else:
+                    print(f"  ❌ ERRORE: strategia {strategy} registrata ma senza "
+                          f"runner grid standard dedicato.")
+                    sys.exit(1)
 
                 # CPCV trade-proxy sui risultati appena prodotti (F3-V07).
                 if validation_mode == "cpcv":

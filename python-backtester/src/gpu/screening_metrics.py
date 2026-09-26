@@ -6,7 +6,7 @@ calcola metriche avanzate e scoring per ranking strategie.
 """
 
 import numpy as np
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 
 def compute_derived_metrics(
