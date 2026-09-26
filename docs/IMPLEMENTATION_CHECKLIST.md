@@ -333,29 +333,29 @@ Lane D (UI, Fase 8): scheletro avviabile dopo F1+F2 (formati risultati + study O
 
 **Obiettivo**: regime detector (soglie) + clustering + focus allocator. Prerequisiti: F3 (risultati validati da analizzare). RF gated su F6. HMM/CUSUM e meta-labeling ESCLUSI (note future v3).
 
-- [ ] **F5-A01 · `regime_detector.py`: ADX + Hurst + volatilità + variance ratio (soglie v3 §5.7)**
+- [x] **F5-A01 · `regime_detector.py`: ADX + Hurst + volatilità + variance ratio (soglie v3 §5.7)**
   Operazione: funzioni pure su DataFrame → etichetta regime per finestra (`TRENDING/RANGING/HIGH_VOL/NORMAL`); nessuna dipendenza ML.
   DoD: su serie sintetiche (trend lineare / sinusoide / random walk / shock) → etichette corrette ≥ 90% delle finestre.
   Dipendenze: F3. Stima: 1.5gg. Lane: A.
 
-- [ ] **F5-A02 · `strategy_clusterer.py`: K-Means su vettori risultato**
+- [x] **F5-A02 · `strategy_clusterer.py`: K-Means su vettori risultato**
   File: `requirements.txt` (+`scikit-learn` pinnato — serve qui per K-Means/silhouette, riusato poi da F5-R01).
   Operazione: vettore per strategia (win_rate, pnl_pct, sharpe, trades, dd, archetipo one-hot); k selezionato con silhouette su k=2..6; label cluster stabili su seed.
   DoD: strategie sintetiche dei 4 archetipi v3 si raggruppano coerentemente; report cluster leggibile.
   Dipendenze: F5-A01 + risultati F3 (prerequisito di fase). Stima: 1gg. Lane: A.
 
-- [ ] **F5-A03 · `focus_allocator.py`: cluster × regime → budget ricerca**
+- [x] **F5-A03 · `focus_allocator.py`: cluster × regime → budget ricerca**
   Operazione: tabella (regime_corrente × cluster → quota trial BO/generazioni); output consumabile da F2 (`n_trials` per strategia) e F4 (quale template mutare).
   DoD: scenario simulato (regime trending) → quota momentum > quota mean-reversion; integrazione secca (import senza cicli) con searcher e generator.
   Dipendenze: F5-A01, F5-A02. Stima: 1gg. Lane: A.
 
-- [ ] **F5-A04 · Report meta ("il cervello")**
+- [x] **F5-A04 · Report meta ("il cervello")**
   File: nuovo `src/meta_analysis/report.py` (con `main()` + argparse minimale: `--results <dir> [--out report.md]`).
   Operazione: comando `python -m src.meta_analysis.report --results <dir>` → markdown: regime corrente, cluster, top strategie per regime, raccomandazione allocazione.
   DoD: report generato dal golden dataset con le frasi attese (assert su contenuti chiave).
   Dipendenze: F5-A03. Stima: 0.75gg. Lane: A.
 
-- [ ] **F5-R01 · (GATED su F6) `feature_importance.py` con Random Forest**
+- [x] **F5-R01 · (GATED su F6) `feature_importance.py` con Random Forest**
   Operazione: solo dopo F6 chiusa; `scikit-learn` già in requirements da F5-A02; importanza feature→successo per strategia; **mai** Bagging/Stacking (esclusione v3 vincolante).
   DoD: su feature sintetiche con 1 segnale vero + 5 rumore → il segnale vero è top-1.
   Dipendenze: F5-A04 + F6 chiusa. Stima: 1gg. Lane: A.

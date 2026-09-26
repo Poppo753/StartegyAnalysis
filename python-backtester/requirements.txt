@@ -4,5 +4,6 @@ python-dotenv
 numba
 optuna==5.0.0
 scipy==1.15.3
+scikit-learn==1.7.2
 # Test suite spedita con il repo (tests/): necessario per `python -m pytest tests/`
 pytest
